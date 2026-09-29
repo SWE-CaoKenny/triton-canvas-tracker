@@ -23,6 +23,8 @@ const state = {
   weekOffset: 0,
   host: store.get("host", CFG.canvasHost),
   showEvents: store.get("showEvents", false),
+  feedItems: [],
+  custom: store.get("custom", []),  // items the user added by hand
 };
 
 // ---------- DOM helpers ----------
@@ -216,6 +218,7 @@ function checkBtn(it) {
 }
 
 function titleEl(it) {
+  if (it.custom) return h("button", { type: "button", class: "link-btn", title: "Edit this item", onclick: () => openItem(it.uid) }, it.title);
   return it.link ? h("a", { href: it.link, target: "_blank", rel: "noopener" }, it.title) : it.title;
 }
 
@@ -226,7 +229,8 @@ function row(it, colors, now, alt) {
     h("td", { class: "c-check" }, checkBtn(it)),
     h("td", { class: "c-title" },
       h("span", { class: "t-title" }, titleEl(it)),
-      isExam(it) && h("span", { class: "badge" }, it.kind === "exam" ? "Exam" : "Quiz")),
+      isExam(it) && h("span", { class: "badge" }, it.kind === "exam" ? "Exam" : "Quiz"),
+      it.custom && h("span", { class: "badge added", title: "You added this item" }, "Added")),
     h("td", { class: "c-course" },
       h("span", { class: "course-tag", style: { "--c": colors[it.course] || "#888" }, title: it.course },
         h("span", { class: "sw" }), shortCourse(it.course))),
@@ -323,7 +327,7 @@ function renderCalendar(visible, colors, now) {
           const inWindow = it.start && !(it.due >= dayStart && it.due <= dayEnd);
           const tm = it.start ? (inWindow ? "window open" : "window closes") : isAllDay(it.due) ? "due today" : fmtTime(it.due);
           return h("div", {
-              class: "cal-item" + (isExam(it) ? " exam" : "") + (it.start ? " window" : "") + (state.done.has(it.uid) ? " done" : ""),
+              class: "cal-item" + (it.custom ? " added" : "") + (isExam(it) ? " exam" : "") + (it.start ? " window" : "") + (state.done.has(it.uid) ? " done" : ""),
               style: { "--c": colors[it.course] || "#888" },
             },
             h("span", { class: "tm" }, tm),
@@ -395,9 +399,18 @@ function renderStatus(msg) {
 function loadIcs(text, { save = true } = {}) {
   const items = parseIcs(text);
   if (!text.includes("BEGIN:VCALENDAR")) throw new Error("That file isn't a calendar (.ics) file.");
-  state.items = items;
+  state.feedItems = items;
+  rebuildItems();
   if (save) { store.set("ics", text); store.set("fetchedAt", Date.now()); }
   render();
+}
+
+// Hand-added items live alongside the feed and use the same shape.
+function customToItem(c) {
+  return { uid: c.id, title: c.title, course: c.course, due: c.due, link: null, kind: c.kind, custom: true };
+}
+function rebuildItems() {
+  state.items = [...state.feedItems, ...state.custom.map(customToItem)];
 }
 
 async function fetchFeed(url) {
@@ -543,7 +556,7 @@ $("#set-save").addEventListener("click", () => {
 $("#set-disconnect").addEventListener("click", () => {
   if (!confirm("Forget your feed link, checked-off items and grade weights on this browser?")) return;
   store.clear();
-  Object.assign(state, { items: [], done: new Set(), hidden: new Set(), weights: {}, sort: "due", tab: "list", weekOffset: 0, host: CFG.canvasHost, showEvents: false });
+  Object.assign(state, { items: [], feedItems: [], custom: [], done: new Set(), hidden: new Set(), weights: {}, sort: "due", tab: "list", weekOffset: 0, host: CFG.canvasHost, showEvents: false });
   $("#settings-dlg").close();
   applyHost(); render();
 });
@@ -626,6 +639,80 @@ $("#w-preset").addEventListener("click", () => {
   saveWeights(); renderWeightRows();
 });
 $("#weights-dlg").addEventListener("close", render);
+
+// ---------- Add / edit item dialog ----------
+
+const pad = n => String(n).padStart(2, "0");
+const dateVal = t => { const d = new Date(t); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+const timeVal = t => { const d = new Date(t); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+let editingId = null, kindTouched = false;
+
+function fillCourseOptions(selected) {
+  const courses = [...new Set(state.items.map(i => i.course))].sort();
+  const sel = $("#i-course");
+  sel.replaceChildren(
+    ...courses.map(c => h("option", { value: c }, shortCourse(c) === c ? c : `${shortCourse(c)} (${c})`)),
+    h("option", { value: "__new" }, "+ New course…"));
+  sel.value = selected && courses.includes(selected) ? selected : courses[0] || "__new";
+  if (selected && !courses.includes(selected)) { sel.value = "__new"; $("#i-course-new").value = selected; }
+  $("#i-course-new-wrap").hidden = sel.value !== "__new";
+}
+
+function openItem(id = null) {
+  editingId = id;
+  const c = id ? state.custom.find(x => x.id === id) : null;
+  $("#item-title").textContent = c ? "Edit Item" : "Add Item";
+  $("#i-title").value = c ? c.title : "";
+  $("#i-course-new").value = "";
+  fillCourseOptions(c ? c.course : null);
+  $("#i-kind").value = c ? c.kind : "assignment";
+  const due = c ? c.due : null;
+  $("#i-date").value = due ? dateVal(due) : dateVal(Date.now() + D);
+  $("#i-time").value = due ? timeVal(due) : "23:59";
+  $("#i-delete").hidden = !c;
+  $("#i-error").textContent = "";
+  kindTouched = !!c;
+  $("#item-dlg").showModal();
+  $("#i-title").focus();
+}
+
+$("#i-course").addEventListener("change", e => {
+  $("#i-course-new-wrap").hidden = e.target.value !== "__new";
+  if (e.target.value === "__new") $("#i-course-new").focus();
+});
+$("#i-kind").addEventListener("change", () => { kindTouched = true; });
+// Guess the type from the title until the user picks one themselves.
+$("#i-title").addEventListener("input", e => {
+  if (!kindTouched) $("#i-kind").value = kindOf(e.target.value, "assignment");
+});
+
+$("#i-save").addEventListener("click", e => {
+  const title = $("#i-title").value.trim();
+  const course = $("#i-course").value === "__new" ? $("#i-course-new").value.trim() : $("#i-course").value;
+  const date = $("#i-date").value, time = $("#i-time").value || "23:59";
+  const err = $("#i-error");
+  if (!title) { e.preventDefault(); err.textContent = "Give it a name."; return; }
+  if (!course) { e.preventDefault(); err.textContent = "Pick a course or type a new one."; return; }
+  if (!date) { e.preventDefault(); err.textContent = "Pick a due date."; return; }
+  const [y, mo, d] = date.split("-").map(Number), [hh, mm] = time.split(":").map(Number);
+  const due = new Date(y, mo - 1, d, hh, mm).getTime();
+  const data = { title, course, kind: $("#i-kind").value, due };
+  if (editingId) Object.assign(state.custom.find(x => x.id === editingId), data);
+  else state.custom.push({ id: "custom-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), ...data });
+  store.set("custom", state.custom);
+  rebuildItems(); render();
+});
+
+$("#i-delete").addEventListener("click", () => {
+  if (!editingId || !confirm("Delete this item?")) return;
+  state.custom = state.custom.filter(x => x.id !== editingId);
+  state.done.delete(editingId); store.set("done", [...state.done]);
+  store.set("custom", state.custom);
+  $("#item-dlg").close();
+  rebuildItems(); render();
+});
+
+$("#btn-add").addEventListener("click", () => openItem());
 
 // ---------- Boot ----------
 

@@ -14,6 +14,7 @@ Built for UC San Diego students, but it works with **any school that uses Canvas
 - **Time-left countdowns** that turn from green to blue to orange to red as the deadline gets closer.
 - **Exams and quizzes stand out** with gold highlighting and a badge. Multi-day testing windows show as one entry.
 - **Grade impact.** Enter your syllabus's grading breakdown (for example "Midterms 40%, Final 45%, Homework 15%") and every card shows its share of your final grade, like "20% of grade". You can sort by it.
+- **Add anything Canvas missed**, like an in-class midterm or a paper handout, with **+ Add Item**. Added items show in every tab, count toward grade weights, and can be edited or deleted.
 - **Check things off** as you finish them.
 - **Filter by course.**
 - **Private by design.** No accounts and no Canvas password. Your feed link, checkmarks and weights are saved only in your own browser.
