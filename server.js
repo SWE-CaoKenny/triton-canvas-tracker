@@ -26,12 +26,17 @@ for (const [addr, prefix] of [
   ["169.254.0.0", 16], ["172.16.0.0", 12], ["192.0.0.0", 24], ["192.168.0.0", 16],
   ["198.18.0.0", 15], ["224.0.0.0", 4], ["240.0.0.0", 4],
 ]) blocked.addSubnet(addr, prefix, "ipv4");
+// Note: don't add ::ffff:0:0/96 here. Node's BlockList matches IPv4 addresses against
+// IPv4-mapped IPv6 rules, so that rule would block every IPv4 address.
 for (const [addr, prefix] of [
-  ["::", 128], ["::1", 128], ["::ffff:0:0", 96], ["64:ff9b::", 96],
-  ["fc00::", 7], ["fe80::", 10], ["ff00::", 8],
+  ["::", 128], ["::1", 128], ["fc00::", 7], ["fe80::", 10], ["ff00::", 8],
 ]) blocked.addSubnet(addr, prefix, "ipv6");
 
-const isBlockedIp = (ip, family) => blocked.check(ip, family === 6 ? "ipv6" : "ipv4");
+function isBlockedIp(ip, family) {
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(ip);
+  if (mapped) return blocked.check(mapped[1], "ipv4");
+  return blocked.check(ip, family === 6 ? "ipv6" : "ipv4");
+}
 
 function validateFeedUrl(raw) {
   let u;
@@ -158,6 +163,7 @@ async function handleFeed(req, res) {
     const body = await fetchFeed(feed);
     send(res, 200, body, "text/calendar; charset=utf-8", { "Cache-Control": "no-store" });
   } catch (e) {
+    console.warn(`feed fetch failed: ${e.message}`); // never log the feed URL itself
     const msg = e.status === 404 || e.status === 401
       ? "Canvas didn't recognize that feed link. Copy it again from Canvas → Calendar → Calendar Feed."
       : "Couldn't load the feed from Canvas. Check the link and try again.";

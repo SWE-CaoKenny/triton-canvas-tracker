@@ -59,6 +59,7 @@ const EXAM_RE = /\b(midterm|mid-term|final exam|final|exam|test)s?\b/i;
 const QUIZ_RE = /\bquiz(zes)?\b/i;
 
 function kindOf(title, uid) {
+  if (/\bpractice\b/i.test(title)) return /assignment/.test(uid) ? "assignment" : "event-lite";
   if (EXAM_RE.test(title) && !/\b(final (project|paper|essay|report|draft))\b/i.test(title)) return "exam";
   if (QUIZ_RE.test(title)) return "quiz";
   if (/assignment/.test(uid)) return "assignment";
@@ -66,7 +67,8 @@ function kindOf(title, uid) {
 }
 
 function shortCourse(full) {
-  const m = full.match(/\b([A-Z]{2,5})\s?-?\s?(\d{1,3}[A-Z]{0,3})\b/);
+  // "MATH 20A - Calculus", "CSE020_FA26_001", "PSYC 3" -> "MATH 20A", "CSE 20", "PSYC 3"
+  const m = full.match(/(?:^|[^A-Za-z])([A-Z]{2,5})[\s_-]*0*(\d{1,3}[A-Z]{0,3})(?![A-Za-z0-9])/);
   if (m) return `${m[1]} ${m[2]}`;
   return full.length > 22 ? full.slice(0, 20).trim() + "…" : full;
 }
@@ -100,7 +102,37 @@ function parseIcs(text) {
   // De-dupe (Canvas sometimes lists overrides twice)
   const seen = new Map();
   for (const it of items) seen.set(it.uid, it);
-  return [...seen.values()];
+  return mergeWindows([...seen.values()]);
+}
+
+// Some courses post a testing window as one calendar event per day ("Test 2 - Testing
+// window" x 7). Collapse runs of the same event on consecutive days into one item with a
+// start and end. Weekly repeats (e.g. "Review quiz due") stay separate.
+function mergeWindows(items) {
+  const groups = new Map(), out = [];
+  for (const it of items) {
+    if (it.uid.includes("assignment")) { out.push(it); continue; }
+    const k = it.course + "\u0000" + it.title.toLowerCase();
+    (groups.get(k) || groups.set(k, []).get(k)).push(it);
+  }
+  for (const list of groups.values()) {
+    list.sort((a, b) => a.due - b.due);
+    let run = [list[0]];
+    const flush = () => {
+      if (run.length === 1) out.push(run[0]);
+      else {
+        const first = run[0], last = run[run.length - 1];
+        const start = new Date(first.due); start.setHours(0, 0, 0, 0);
+        out.push({ ...last, uid: first.uid + "~window", start: start.getTime(), days: run.length });
+      }
+    };
+    for (const it of list.slice(1)) {
+      if (it.due - run[run.length - 1].due <= 1.5 * D) run.push(it);
+      else { flush(); run = [it]; }
+    }
+    flush();
+  }
+  return out;
 }
 
 // ---------- Grade weights ----------
@@ -166,9 +198,14 @@ const fmtDue = t => new Date(t).toLocaleString(undefined, { weekday: "short", mo
 const isExam = it => it.kind === "exam" || it.kind === "quiz";
 const CHECK_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>';
 
+const fmtDay = t => new Date(t).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+
 function card(it, colors) {
-  const ms = it.due - Date.now();
-  const [big, small] = countdown(ms);
+  const now = Date.now();
+  const ms = it.due - now;
+  const notOpen = it.start && it.start > now;
+  let [big, small] = countdown(notOpen ? it.start - now : ms);
+  if (it.start && ms >= 0) small = notOpen ? "until open" : (small ? small + " left" : "left");
   const fill = ms < 0 ? 100 : Math.max(4, Math.min(100, 100 - (ms / (14 * D)) * 100));
   const share = gradeShare(it);
   const done = state.done.has(it.uid);
@@ -195,7 +232,7 @@ function card(it, colors) {
     h("p", { class: "title" }, it.link ? h("a", { href: it.link, target: "_blank", rel: "noopener" }, it.title) : it.title),
     h("div", { class: "course" }, h("span", { class: "dot" }), shortCourse(it.course)),
     h("div", { class: "bar" }, h("i", { style: { width: fill + "%" } })),
-    h("div", { class: "due" }, "Due " + fmtDue(it.due)),
+    h("div", { class: "due" }, it.start ? `Window ${fmtDay(it.start)} – ${fmtDay(it.due)}` : "Due " + fmtDue(it.due)),
   );
 }
 
@@ -242,7 +279,7 @@ function render() {
 
   const t = Date.now();
   const visible = state.items.filter(it =>
-    !state.hidden.has(it.course) && (state.showEvents || it.kind !== "event"));
+    !state.hidden.has(it.course) && (state.showEvents || it.kind !== "event"));  // "event-lite" = shown, not an exam
   const active = visible.filter(it => !state.done.has(it.uid));
   const finished = visible.filter(it => state.done.has(it.uid) && t - it.due < 14 * D);
 
@@ -379,9 +416,15 @@ function demoIcs() {
     ["Midterm 1", "CHEM 6A - General Chemistry", -20 * D],
     ["Problem Set 5", "MATH 20A - Calculus for Science & Engr", -2 * D],
   ];
+  // A multi-day testing window posted as one calendar event per day (merged into one card)
+  const day = t => { const d = new Date(t); return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`; };
+  const windowDays = [2, 3, 4, 5, 6].map((n, i) => [
+    "BEGIN:VEVENT", `UID:event-calendar-event-demo${i}`, `DTSTART;VALUE=DATE:${day(now + n * D)}`,
+    "SUMMARY:Test 1 - Testing window [CSE 20 - Discrete Mathematics]", "END:VEVENT",
+  ]);
   return ["BEGIN:VCALENDAR", "VERSION:2.0", ...ev.flatMap(([t, c, off], i) => [
     "BEGIN:VEVENT", `UID:event-assignment-demo${i}`, `DTSTART:${stamp(now + off)}`, `SUMMARY:${t} [${c}]`, "END:VEVENT",
-  ]), "END:VCALENDAR"].join("\r\n");
+  ]), ...windowDays.flat(), "END:VCALENDAR"].join("\r\n");
 }
 $("#try-demo").addEventListener("click", () => {
   store.set("feedUrl", null); store.set("demo", true);
