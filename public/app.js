@@ -1088,6 +1088,8 @@ document.title = CFG.appName;
 $("#app-name").textContent = CFG.appName;
 $("#foot-note").textContent = CFG.footNote;
 $("#repo-link").href = CFG.repoUrl;
+if (CFG.authorName) { $("#author-link").textContent = CFG.authorName; $("#author-link").href = CFG.authorUrl || CFG.repoUrl; }
+else $(".made-by").remove();
 document.documentElement.style.setProperty("--accent", CFG.accent);
 document.documentElement.style.setProperty("--accent-ink", CFG.accentInk);
 $("#today").textContent = new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });

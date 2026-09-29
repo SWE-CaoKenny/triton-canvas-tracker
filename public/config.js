@@ -7,5 +7,7 @@ window.TRACKER_CONFIG = {
   accent: "#FFCD00",
   accentInk: "#182B49",
   footNote: "Unofficial student project, not affiliated with UC San Diego.",
+  authorName: "Kenny Cao",
+  authorUrl: "https://github.com/SWE-CaoKenny",
   repoUrl: "https://github.com/SWE-CaoKenny/triton-canvas-tracker",
 };
