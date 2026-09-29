@@ -4,6 +4,8 @@ See every Canvas assignment, quiz and exam in one dark-mode dashboard, sorted by
 
 Built for UC San Diego students, but it works with **any school that uses Canvas**.
 
+**👉 Use it now: [triton-canvas-tracker-production.up.railway.app](https://triton-canvas-tracker-production.up.railway.app)**
+
 > Unofficial student project. Not affiliated with UC San Diego or Instructure.
 
 ## Features
