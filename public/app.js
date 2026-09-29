@@ -25,6 +25,8 @@ const state = {
   showEvents: store.get("showEvents", false),
   feedItems: [],
   custom: store.get("custom", []),  // items the user added by hand
+  schedule: store.get("schedule", null),  // parsed UCSD Class Planner schedule
+  scheduleError: null,
 };
 
 // ---------- DOM helpers ----------
@@ -230,7 +232,8 @@ function row(it, colors, now, alt) {
     h("td", { class: "c-title" },
       h("span", { class: "t-title" }, titleEl(it)),
       isExam(it) && h("span", { class: "badge" }, it.kind === "exam" ? "Exam" : "Quiz"),
-      it.custom && h("span", { class: "badge added", title: "You added this item" }, "Added")),
+      it.custom && h("span", { class: "badge added", title: "You added this item" }, "Added"),
+      it.planner && h("span", { class: "badge added", title: "From your Class Planner schedule" }, "Planner")),
     h("td", { class: "c-course" },
       h("span", { class: "course-tag", style: { "--c": colors[it.course] || "#888" }, title: it.course },
         h("span", { class: "sw" }), shortCourse(it.course))),
@@ -380,7 +383,10 @@ function render() {
   $("#s-week").textContent = active.filter(it => it.due >= now && it.due - now < 7 * D).length;
   $("#s-exam").textContent = active.filter(it => it.due >= now && isExam(it)).length;
 
-  const board = state.tab === "calendar" ? renderCalendar(visible, colors, now)
+  renderNextClassHud(now);
+  $("#filterbar").hidden = state.tab === "schedule";
+  const board = state.tab === "schedule" ? renderSchedule(colors, now)
+    : state.tab === "calendar" ? renderCalendar(visible, colors, now)
     : state.tab === "exams" ? renderExams(active, finished, colors, now)
     : renderList(active, finished, colors, now);
   $("#board").replaceChildren(...board.filter(Boolean));
@@ -410,7 +416,7 @@ function customToItem(c) {
   return { uid: c.id, title: c.title, course: c.course, due: c.due, link: null, kind: c.kind, custom: true };
 }
 function rebuildItems() {
-  state.items = [...state.feedItems, ...state.custom.map(customToItem)];
+  state.items = [...state.feedItems, ...state.custom.map(customToItem), ...scheduleExamItems()];
 }
 
 async function fetchFeed(url) {
@@ -556,7 +562,7 @@ $("#set-save").addEventListener("click", () => {
 $("#set-disconnect").addEventListener("click", () => {
   if (!confirm("Forget your feed link, checked-off items and grade weights on this browser?")) return;
   store.clear();
-  Object.assign(state, { items: [], feedItems: [], custom: [], done: new Set(), hidden: new Set(), weights: {}, sort: "due", tab: "list", weekOffset: 0, host: CFG.canvasHost, showEvents: false });
+  Object.assign(state, { items: [], feedItems: [], custom: [], schedule: null, scheduleError: null, done: new Set(), hidden: new Set(), weights: {}, sort: "due", tab: "list", weekOffset: 0, host: CFG.canvasHost, showEvents: false });
   $("#settings-dlg").close();
   applyHost(); render();
 });
@@ -639,6 +645,358 @@ $("#w-preset").addEventListener("click", () => {
   saveWeights(); renderWeightRows();
 });
 $("#weights-dlg").addEventListener("close", render);
+
+// ---------- Class schedule (UCSD Class Planner) ----------
+
+const DAY_NAMES = { M: "Mon", T: "Tue", W: "Wed", R: "Thu", F: "Fri", S: "Sat", U: "Sun" };
+const DAY_ORDER = ["M", "T", "W", "R", "F", "S", "U"];
+const JS_DAY = { 0: "U", 1: "M", 2: "T", 3: "W", 4: "R", 5: "F", 6: "S" };
+const fmtMin = m => {
+  const h = Math.floor(m / 60), mm = m % 60, ap = h >= 12 ? "pm" : "am";
+  return `${(h % 12) || 12}:${String(mm).padStart(2, "0")}${ap}`;
+};
+const fmtRange = (a, b) => `${fmtMin(a)}–${fmtMin(b)}`;
+const mapsUrl = (q) => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
+
+async function fetchSchedule(url) {
+  const res = await fetch("/api/schedule", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }),
+  });
+  const body = await res.text();
+  if (!res.ok) throw new Error(body || "Couldn't reach Class Planner.");
+  return JSON.parse(body);
+}
+
+async function refreshSchedule({ quiet = true } = {}) {
+  const url = store.get("plannerUrl", null);
+  if (!url) return;
+  try {
+    state.schedule = await fetchSchedule(url);
+    store.set("schedule", state.schedule);
+    rebuildItems(); render();
+  } catch (e) {
+    if (!quiet) state.scheduleError = e.message, render();
+  }
+}
+
+// Match a schedule course ("CSE 20") to the Canvas course name, so colors and exams line up.
+function feedCourseFor(short) {
+  return [...new Set(state.feedItems.map(i => i.course))].find(c => shortCourse(c) === short) || null;
+}
+function scheduleColor(short, colors) {
+  const feed = feedCourseFor(short);
+  if (feed && colors[feed]) return colors[feed];
+  const courses = [...new Set((state.schedule?.sections || []).map(s => s.course))].sort();
+  return PALETTE[(courses.indexOf(short) + 3) % PALETTE.length];
+}
+
+// Midterms/finals from Class Planner become tracker items (unless Canvas already lists them).
+function scheduleExamItems() {
+  const sch = state.schedule;
+  if (!sch) return [];
+  return sch.exams.flatMap(ex => {
+    const [y, mo, d] = ex.date.split("-").map(Number);
+    const start = ex.start ?? 0;
+    const due = new Date(y, mo - 1, d, Math.floor(start / 60), start % 60).getTime();
+    const course = feedCourseFor(ex.course) || ex.course;
+    const dayStart = new Date(y, mo - 1, d).getTime();
+    const dup = state.feedItems.some(i => i.kind === "exam" && shortCourse(i.course) === ex.course &&
+      i.due >= dayStart && i.due < dayStart + D);
+    if (dup) return [];
+    return [{
+      uid: `planner-${ex.course}-${ex.kind}-${ex.date}`.replace(/\s+/g, "_"),
+      title: `${ex.kind === "Final" ? "Final Exam" : ex.kind}${ex.location ? ` · ${ex.location}` : ""}`,
+      course, due, link: null, kind: "exam", planner: true,
+    }];
+  });
+}
+
+function nextClass(now = Date.now()) {
+  const sch = state.schedule;
+  if (!sch || !sch.meetings.length) return null;
+  const d0 = new Date(now); d0.setHours(0, 0, 0, 0);
+  for (let i = 0; i < 7; i++) {
+    const day = new Date(d0); day.setDate(d0.getDate() + i);
+    const code = JS_DAY[day.getDay()];
+    const nowMin = i === 0 ? new Date(now).getHours() * 60 + new Date(now).getMinutes() : -1;
+    const todays = sch.meetings.filter(m => m.day === code && m.end > nowMin).sort((a, b) => a.start - b.start);
+    if (todays.length) {
+      const m = todays[0];
+      const inProgress = i === 0 && m.start <= nowMin;
+      return { m, when: i === 0 ? (inProgress ? "now" : "today") : i === 1 ? "tomorrow" : DAY_NAMES[code] };
+    }
+  }
+  return null;
+}
+
+// Assign side-by-side lanes to overlapping meetings within one day.
+function layoutDay(list) {
+  const sorted = [...list].sort((a, b) => a.start - b.start || b.end - a.end);
+  const out = [];
+  let group = [], groupEnd = -1;
+  const flush = () => {
+    const lanes = [];
+    for (const m of group) {
+      let lane = lanes.findIndex(end => end <= m.start);
+      if (lane < 0) { lane = lanes.length; lanes.push(0); }
+      lanes[lane] = m.end;
+      out.push({ m, lane });
+    }
+    for (const o of out.slice(-group.length)) { o.lanes = lanes.length; o.conflict = lanes.length > 1; }
+  };
+  for (const m of sorted) {
+    if (group.length && m.start >= groupEnd) { flush(); group = []; groupEnd = -1; }
+    group.push(m); groupEnd = Math.max(groupEnd, m.end);
+  }
+  if (group.length) flush();
+  return out;
+}
+
+function scheduleConnectForm() {
+  const input = h("input", { type: "url", placeholder: "https://classplanner.apps.ucsd.edu/view/CS2…", autocomplete: "off", spellcheck: "false", required: true });
+  const err = h("div", { class: "error", role: "alert" }, state.scheduleError || "");
+  const btn = h("button", { class: "btn primary", type: "submit" }, "Load schedule");
+  const form = h("form", { class: "feed-form", onsubmit: async e => {
+    e.preventDefault();
+    err.textContent = ""; btn.disabled = true; btn.textContent = "Loading…";
+    try {
+      const url = input.value.trim();
+      state.schedule = await fetchSchedule(url);
+      store.set("plannerUrl", url); store.set("schedule", state.schedule);
+      state.scheduleError = null;
+      rebuildItems(); render();
+    } catch (ex) {
+      err.textContent = ex.message;
+    } finally { btn.disabled = false; btn.textContent = "Load schedule"; }
+  } },
+    h("label", { class: "lbl" }, "Class Planner share link"),
+    h("div", { class: "feed-row" }, input, btn));
+  return h("div", { class: "sched-connect" },
+    h("h3", {}, "Add your class schedule"),
+    h("p", { class: "muted" }, "See your weekly classes with times, rooms and professors, a campus map, walking times between classes, and your midterms and finals as countdowns."),
+    h("ol", { class: "steps" },
+      h("li", {}, "Open ", h("a", { href: "https://classplanner.apps.ucsd.edu/", target: "_blank", rel: "noopener" }, "Class Planner"), " and open your schedule."),
+      h("li", {}, "Click ", h("b", {}, "Save & share"), " and copy the link."),
+      h("li", {}, "Paste it below.")),
+    form, err);
+}
+
+// Keep one Leaflet map alive across re-renders so panning isn't reset every minute.
+const mapState = { el: null, map: null, layer: null, key: "" };
+let leafletPromise = null;
+function loadLeaflet() {
+  if (window.L) return Promise.resolve(window.L);
+  return leafletPromise ||= new Promise((resolve, reject) => {
+    const css = document.createElement("link");
+    css.rel = "stylesheet"; css.href = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css";
+    document.head.append(css);
+    const js = document.createElement("script");
+    js.src = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js";
+    js.onload = () => resolve(window.L); js.onerror = reject;
+    document.head.append(js);
+  });
+}
+
+function scheduleMap(sch, colors) {
+  if (!mapState.el) mapState.el = h("div", { class: "sched-map", role: "img", "aria-label": "Map of your class buildings" });
+  const key = JSON.stringify(sch.locations) + JSON.stringify(sch.sections.map(s => s.course));
+  loadLeaflet().then(L => {
+    if (!mapState.map) {
+      mapState.map = L.map(mapState.el, { scrollWheelZoom: false });
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+      }).addTo(mapState.map);
+    }
+    if (mapState.key !== key) {
+      mapState.key = key;
+      if (mapState.layer) mapState.layer.remove();
+      mapState.layer = L.layerGroup().addTo(mapState.map);
+      const pts = [];
+      for (const loc of sch.locations) {
+        const here = sch.sections.filter(s => s.meetings.some(m => m.buildingCode === loc.code));
+        const color = here.length ? scheduleColor(here[0].course, colors) : "#182B49";
+        const popup = h("div", { class: "map-pop" },
+          h("b", {}, loc.name), h("br"),
+          ...here.flatMap(s => [`${s.course} ${s.type} · ${[...new Set(s.meetings.filter(m => m.buildingCode === loc.code).map(m => m.room))].join(", ")}`, h("br")]),
+          h("a", { href: mapsUrl(`${loc.lat},${loc.lng}`), target: "_blank", rel: "noopener" }, "Directions ↗"));
+        L.circleMarker([loc.lat, loc.lng], { radius: 9, color: "#fff", weight: 2, fillColor: color, fillOpacity: 1 })
+          .bindPopup(popup).bindTooltip(loc.code, { permanent: true, direction: "right", className: "map-label" })
+          .addTo(mapState.layer);
+        pts.push([loc.lat, loc.lng]);
+      }
+      mapState.pts = pts;
+      mapState.fitted = false;
+    }
+    // Size and fit only once the container is on the page and laid out.
+    requestAnimationFrame(() => {
+      if (!mapState.el.isConnected || !mapState.el.clientHeight) return;
+      mapState.map.invalidateSize();
+      if (!mapState.fitted && mapState.pts.length) {
+        mapState.map.fitBounds(mapState.pts, { padding: [40, 40], maxZoom: 17 });
+        mapState.fitted = true;
+      }
+    });
+  }).catch(() => { mapState.el.textContent = "Map couldn't load."; });
+  return mapState.el;
+}
+
+function renderSchedule(colors, now) {
+  const sch = state.schedule;
+  if (!sch) return [scheduleConnectForm()];
+
+  const courses = [...new Set(sch.sections.map(s => s.course))];
+  const days = DAY_ORDER.filter(d => ["M", "T", "W", "R", "F"].includes(d) || sch.meetings.some(m => m.day === d));
+  const minStart = Math.min(...sch.meetings.map(m => m.start), 8 * 60);
+  const maxEnd = Math.max(...sch.meetings.map(m => m.end), 17 * 60);
+  const startH = Math.floor(minStart / 60), endH = Math.ceil(maxEnd / 60);
+  const PX = 1.1; // pixels per minute
+  const todayCode = JS_DAY[new Date(now).getDay()];
+  const nowMin = new Date(now).getHours() * 60 + new Date(now).getMinutes();
+  let conflicts = 0;
+
+  const head = h("div", { class: "sched-head" },
+    h("div", {},
+      h("div", { class: "sched-title" }, `${sch.term} schedule`),
+      h("div", { class: "muted small" }, `${courses.join(", ")} · ${sch.sections.length} sections`)),
+    h("div", { class: "sched-actions" },
+      h("a", { class: "btn small", href: sch.shareUrl, target: "_blank", rel: "noopener" }, "Open in Class Planner ↗"),
+      h("button", { class: "btn small", onclick: () => refreshSchedule({ quiet: false }) }, "Refresh"),
+      h("button", { class: "btn small danger", onclick: () => {
+        if (!confirm("Remove your class schedule from this tracker?")) return;
+        state.schedule = null; store.set("schedule", null); store.set("plannerUrl", null);
+        rebuildItems(); render();
+      } }, "Remove")));
+
+  const nc = nextClass(now);
+  const next = nc && h("div", { class: "sched-next", style: { "--c": scheduleColor(nc.m.course, colors) } },
+    h("span", { class: "lbl" }, nc.when === "now" ? "In class now" : "Next class"),
+    h("b", {}, `${nc.m.course} ${nc.m.type}`),
+    ` ${nc.when === "now" || nc.when === "today" ? "" : nc.when + " "}${fmtRange(nc.m.start, nc.m.end)} · `,
+    h("a", { href: mapsUrl(`${nc.m.building || nc.m.room} UC San Diego`), target: "_blank", rel: "noopener" }, nc.m.room || nc.m.building),
+    nc.m.instructor ? ` · ${nc.m.instructor}` : "");
+
+  // Week grid
+  const hours = [];
+  for (let hh = startH; hh <= endH; hh++) hours.push(hh);
+  const gridH = (endH - startH) * 60 * PX;
+  const grid = h("div", { class: "wk", style: { "--cols": days.length } },
+    h("div", { class: "wk-corner" }),
+    ...days.map(d => h("div", { class: "wk-dayhead" + (d === todayCode ? " today" : "") }, DAY_NAMES[d])),
+    h("div", { class: "wk-hours", style: { height: gridH + "px" } },
+      ...hours.slice(0, -1).map(hh => h("div", { class: "wk-hour", style: { top: (hh - startH) * 60 * PX + "px" } }, fmtMin(hh * 60).replace(":00", "")))),
+    ...days.map(d => {
+      const laid = layoutDay(sch.meetings.filter(m => m.day === d));
+      conflicts += laid.filter(o => o.conflict).length;
+      return h("div", { class: "wk-col" + (d === todayCode ? " today" : ""), style: { height: gridH + "px" } },
+        ...hours.slice(0, -1).map(hh => h("div", { class: "wk-line", style: { top: (hh - startH) * 60 * PX + "px" } })),
+        d === todayCode && nowMin > startH * 60 && nowMin < endH * 60 && h("div", { class: "wk-now", style: { top: (nowMin - startH * 60) * PX + "px" } }),
+        ...laid.map(({ m, lane, lanes, conflict }) => h("div", {
+          class: "wk-block" + (conflict ? " conflict" : ""),
+          style: {
+            "--c": scheduleColor(m.course, colors),
+            top: (m.start - startH * 60) * PX + "px", height: Math.max(22, (m.end - m.start) * PX - 2) + "px",
+            left: `calc(${(100 / lanes) * lane}% + 2px)`, width: `calc(${100 / lanes}% - 4px)`,
+          },
+          title: `${m.course} ${m.type} ${fmtRange(m.start, m.end)} · ${m.room} · ${m.instructor}${conflict ? " · TIME CONFLICT" : ""}`,
+        },
+          h("b", {}, `${m.course} `, h("span", { class: "ty" }, m.type)),
+          h("span", {}, fmtRange(m.start, m.end)),
+          h("span", {}, m.remote ? "Remote" : m.tba ? "TBA" : m.room),
+          h("span", { class: "ins" }, m.instructor))));
+    }));
+
+  // Phone-friendly day list (shown instead of the grid on small screens)
+  const dayList = h("div", { class: "wk-list" }, ...days.filter(d => sch.meetings.some(m => m.day === d)).map(d =>
+    h("div", { class: "wk-list-day" + (d === todayCode ? " today" : "") },
+      h("div", { class: "wk-list-head" }, DAY_NAMES[d]),
+      ...sch.meetings.filter(m => m.day === d).sort((a, b) => a.start - b.start).map(m =>
+        h("div", { class: "wk-list-item", style: { "--c": scheduleColor(m.course, colors) } },
+          h("span", { class: "tm" }, fmtRange(m.start, m.end)),
+          h("b", {}, `${m.course} ${m.type}`),
+          h("span", { class: "muted" }, ` · ${m.room} · ${m.instructor}`))))));
+
+  // Walking between back-to-back classes
+  const walks = sch.walks.filter(w => w.gapMinutes < 60 && w.from.loc !== w.to.loc || w.gapMinutes < 0);
+  const walkTable = walks.length ? h("table", { class: "tbl walk-tbl" },
+    h("thead", {}, h("tr", {}, h("th", {}, "Day"), h("th", {}, "From → To"), h("th", {}, "Walk"), h("th", {}, "Time between"), h("th", {}, ""))),
+    h("tbody", {}, walks.map((w, i) => {
+      const st = w.gapMinutes < 0 ? ["Overlap", "u-late"] : w.walkMinutes >= w.gapMinutes ? ["Tight", "u-red"] : w.walkMinutes >= w.gapMinutes - 3 ? ["Close", "u-orange"] : ["OK", "u-green"];
+      return h("tr", { class: "row" + (i % 2 ? " alt" : "") },
+        h("td", {}, DAY_NAMES[w.day]),
+        h("td", {}, `${w.from.course} ${w.from.type} (${w.from.loc}) → ${w.to.course} ${w.to.type} (${w.to.loc})`),
+        h("td", {}, w.gapMinutes < 0 ? "—" : `${w.walkMinutes} min · ${w.meters} m`),
+        h("td", {}, w.gapMinutes < 0 ? `overlaps ${-w.gapMinutes} min` : `${w.gapMinutes} min`),
+        h("td", {}, h("span", { class: "pill " + st[1] }, st[0])));
+    }))) : h("div", { class: "empty" }, "No back-to-back classes in different buildings.");
+
+  // Class details
+  const details = h("table", { class: "tbl" },
+    h("thead", {}, h("tr", {}, h("th", {}, "Course"), h("th", {}, "Type"), h("th", {}, "Section"), h("th", {}, "Days & time"), h("th", {}, "Location"), h("th", {}, "Instructor"))),
+    h("tbody", {}, sch.sections.sort((a, b) => a.course.localeCompare(b.course) || a.type.localeCompare(b.type)).map((s, i) => {
+      const slots = new Map();
+      for (const m of s.meetings) {
+        const k = `${m.start}-${m.end}|${m.room}`;
+        (slots.get(k) || slots.set(k, { m, days: [] }).get(k)).days.push(m.day);
+      }
+      const rows = [...slots.values()];
+      return h("tr", { class: "row" + (i % 2 ? " alt" : "") },
+        h("td", {}, h("span", { class: "course-tag", style: { "--c": scheduleColor(s.course, colors) } }, h("span", { class: "sw" }), h("b", {}, s.course)),
+          h("div", { class: "muted small" }, s.title)),
+        h("td", {}, s.type),
+        h("td", { class: "mono" }, s.code),
+        h("td", {}, ...rows.flatMap(({ m, days }) => [
+          `${days.sort((a, b) => DAY_ORDER.indexOf(a) - DAY_ORDER.indexOf(b)).map(d => DAY_NAMES[d]).join(", ")} ${fmtRange(m.start, m.end)}`, h("br")])),
+        h("td", {}, ...rows.flatMap(({ m }) => [m.remote ? "Remote" : m.tba ? "TBA"
+          : h("a", { href: mapsUrl(`${m.building || m.room} UC San Diego`), target: "_blank", rel: "noopener", title: m.building }, `${m.room}`),
+          m.building ? h("span", { class: "muted small" }, ` ${m.building}`) : "", h("br")])),
+        h("td", {}, s.instructor || "Staff"));
+    })));
+
+  // Exams
+  const exams = [...sch.exams].sort((a, b) => a.date.localeCompare(b.date) || (a.start ?? 0) - (b.start ?? 0));
+  const examTable = exams.length ? h("table", { class: "tbl" },
+    h("thead", {}, h("tr", {}, h("th", {}, "Exam"), h("th", {}, "Course"), h("th", {}, "Date"), h("th", {}, "Time"), h("th", {}, "Location"), h("th", {}, "Countdown"))),
+    h("tbody", {}, exams.map((ex, i) => {
+      const [y, mo, d] = ex.date.split("-").map(Number);
+      const at = new Date(y, mo - 1, d, Math.floor((ex.start ?? 0) / 60), (ex.start ?? 0) % 60).getTime();
+      const ms = at - now;
+      const cls = ms < 0 ? "done-pill" : ms < D ? "u-red" : ms < 3 * D ? "u-orange" : ms < 7 * D ? "u-blue" : "u-green";
+      return h("tr", { class: "row exam" + (i % 2 ? " alt" : "") },
+        h("td", {}, h("b", {}, ex.kind)),
+        h("td", {}, h("span", { class: "course-tag", style: { "--c": scheduleColor(ex.course, colors) } }, h("span", { class: "sw" }), ex.course)),
+        h("td", {}, new Date(at).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })),
+        h("td", {}, ex.start != null ? fmtRange(ex.start, ex.end) : ex.time),
+        h("td", {}, ex.location ? h("a", { href: mapsUrl(`${ex.location} UC San Diego`), target: "_blank", rel: "noopener" }, ex.location) : "TBA"),
+        h("td", {}, h("span", { class: "pill " + cls }, ms < 0 ? "done" : fmtSpan(ms))));
+    }))) : h("div", { class: "empty" }, "No midterms or finals listed yet.");
+
+  return [
+    h("div", { class: "sched" },
+      head,
+      state.scheduleError && h("div", { class: "error" }, state.scheduleError),
+      next,
+      conflicts > 0 && h("div", { class: "sched-warn" }, "⚠ This schedule has overlapping classes (shown in red)."),
+      h("h4", { class: "sched-h" }, "Weekly schedule"),
+      grid, dayList,
+      h("div", { class: "sched-two" },
+        h("div", {}, h("h4", { class: "sched-h" }, "Where your classes are"), scheduleMap(sch, colors)),
+        h("div", {}, h("h4", { class: "sched-h" }, "Walking between classes"), walkTable)),
+      h("h4", { class: "sched-h" }, "Class details"), details,
+      h("h4", { class: "sched-h" }, "Midterms & finals"), examTable,
+      h("p", { class: "fine" }, `From UCSD Class Planner · updated ${new Date(sch.fetchedAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}. Midterms and finals also appear in your List and Exams tabs.`)),
+  ];
+}
+
+function renderNextClassHud(now) {
+  const el = $("#s-next");
+  const nc = nextClass(now);
+  el.hidden = !nc;
+  if (!nc) return;
+  el.replaceChildren(
+    nc.when === "now" ? "In class: " : "Next class: ",
+    h("b", {}, `${nc.m.course} ${nc.m.type}`),
+    ` ${nc.when === "now" || nc.when === "today" ? "" : nc.when + " "}${fmtMin(nc.m.start)} · ${nc.m.room}`);
+}
 
 // ---------- Add / edit item dialog ----------
 
@@ -729,6 +1087,7 @@ const cached = store.get("ics", null);
 if (cached) { try { loadIcs(cached, { save: false }); } catch { render(); } }
 else render();
 refresh({ quiet: true });
+refreshSchedule();
 
 setInterval(render, 60e3);
 setInterval(() => refresh({ quiet: true }), 30 * 60e3);

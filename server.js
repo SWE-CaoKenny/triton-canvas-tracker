@@ -9,6 +9,7 @@ const dns = require("node:dns");
 const net = require("node:net");
 const fs = require("node:fs");
 const path = require("node:path");
+const planner = require("./planner");
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -61,42 +62,46 @@ function safeLookup(hostname, options, cb) {
   });
 }
 
-function fetchFeed(u, redirectsLeft = MAX_REDIRECTS) {
+// GET a URL that already passed `validate`. Redirects are followed only if the new
+// location passes `validate` too.
+function fetchText(u, { validate, accept, maxBytes }, redirectsLeft = MAX_REDIRECTS) {
   return new Promise((resolve, reject) => {
     const req = https.get(u, {
       lookup: safeLookup,
       timeout: FETCH_TIMEOUT_MS,
-      headers: { "User-Agent": "triton-canvas-tracker", Accept: "text/calendar" },
+      headers: { "User-Agent": "triton-canvas-tracker", Accept: accept },
     }, res => {
       const { statusCode, headers } = res;
       if (statusCode >= 300 && statusCode < 400 && headers.location) {
         res.resume();
         if (redirectsLeft <= 0) return reject(new Error("too many redirects"));
-        const next = validateFeedUrl(new URL(headers.location, u).toString());
-        if (!next) return reject(new Error("redirected to a non-feed URL"));
-        return resolve(fetchFeed(next, redirectsLeft - 1));
+        const next = validate(new URL(headers.location, u).toString());
+        if (!next) return reject(new Error("redirected to a disallowed URL"));
+        return resolve(fetchText(next, { validate, accept, maxBytes }, redirectsLeft - 1));
       }
       if (statusCode !== 200) {
         res.resume();
-        return reject(Object.assign(new Error(`Canvas responded ${statusCode}`), { status: statusCode }));
+        return reject(Object.assign(new Error(`upstream responded ${statusCode}`), { status: statusCode }));
       }
       const chunks = [];
       let size = 0;
       res.on("data", c => {
         size += c.length;
-        if (size > MAX_FEED_BYTES) { req.destroy(); reject(new Error("feed too large")); }
+        if (size > maxBytes) { req.destroy(); reject(new Error("response too large")); }
         else chunks.push(c);
       });
-      res.on("end", () => {
-        const body = Buffer.concat(chunks).toString("utf8");
-        if (!body.startsWith("BEGIN:VCALENDAR")) return reject(new Error("not a calendar feed"));
-        resolve(body);
-      });
+      res.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
       res.on("error", reject);
     });
     req.on("timeout", () => req.destroy(new Error("timed out")));
     req.on("error", reject);
   });
+}
+
+async function fetchFeed(u) {
+  const body = await fetchText(u, { validate: validateFeedUrl, accept: "text/calendar", maxBytes: MAX_FEED_BYTES });
+  if (!body.startsWith("BEGIN:VCALENDAR")) throw new Error("not a calendar feed");
+  return body;
 }
 
 // ---------- Simple per-IP rate limit ----------
@@ -171,6 +176,42 @@ async function handleFeed(req, res) {
   }
 }
 
+// ---------- UCSD Class Planner schedules ----------
+
+const SCHEDULE_CACHE_MS = 15 * 60_000;
+const scheduleCache = new Map();  // schedule ref -> { at, data }; share links are public
+
+async function handleSchedule(req, res) {
+  if (req.method !== "POST") return send(res, 405, "Method not allowed");
+  if (rateLimited(clientIp(req))) return send(res, 429, "Too many requests. Try again in a few minutes.");
+  let raw = "";
+  try { raw = JSON.parse(await readBody(req)).url || ""; } catch { return send(res, 400, "Bad request"); }
+  const u = planner.validatePlannerUrl(String(raw).trim());
+  if (!u) {
+    return send(res, 400, "That doesn't look like a Class Planner share link. It should look like https://classplanner.apps.ucsd.edu/view/CS2…");
+  }
+  const key = u.pathname;
+  const hit = scheduleCache.get(key);
+  if (hit && Date.now() - hit.at < SCHEDULE_CACHE_MS) {
+    return send(res, 200, JSON.stringify(hit.data), "application/json", { "Cache-Control": "no-store" });
+  }
+  try {
+    const html = await fetchText(u, { validate: planner.validatePlannerUrl, accept: "text/html", maxBytes: 4 * 1024 * 1024 });
+    const data = planner.parseSchedulePage(html);
+    if (scheduleCache.size > 300) scheduleCache.delete(scheduleCache.keys().next().value);
+    scheduleCache.set(key, { at: Date.now(), data });
+    send(res, 200, JSON.stringify(data), "application/json", { "Cache-Control": "no-store" });
+  } catch (e) {
+    console.warn(`schedule fetch failed: ${e.message}`);
+    const msg = e.status === 404
+      ? "Class Planner couldn't find that schedule. Copy the link again from Class Planner → Save & share."
+      : e.code === "PARSE"
+        ? "Couldn't find a schedule at that link. Copy it again from Class Planner → Save & share. (If the link opens fine in Class Planner, please report this on GitHub.)"
+        : "Couldn't reach Class Planner. Try again in a moment.";
+    send(res, 502, msg);
+  }
+}
+
 function serveStatic(res, pathname) {
   const rel = pathname === "/" ? "index.html" : decodeURIComponent(pathname).replace(/^\/+/, "");
   const file = path.resolve(PUBLIC_DIR, rel);
@@ -185,6 +226,7 @@ const server = http.createServer((req, res) => {
   let url;
   try { url = new URL(req.url, "http://localhost"); } catch { return send(res, 400, "Bad request"); }
   if (url.pathname === "/api/feed") return handleFeed(req, res);
+  if (url.pathname === "/api/schedule") return handleSchedule(req, res);
   if (req.method !== "GET" && req.method !== "HEAD") return send(res, 405, "Method not allowed");
   if (url.pathname === "/healthz") return send(res, 200, "ok");
   serveStatic(res, url.pathname);

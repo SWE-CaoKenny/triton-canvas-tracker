@@ -31,6 +31,7 @@
       <div class="stat hot"><b id="s-24">0</b> due in 24 hrs</div>
       <div class="stat"><b id="s-week">0</b> due this week</div>
       <div class="stat exam"><b id="s-exam">0</b> exams &amp; quizzes ahead</div>
+      <div class="stat next" id="s-next" hidden></div>
     </div>
     <div class="actions">
       <button class="btn primary" id="btn-add">+ Add Item</button>
@@ -87,9 +88,10 @@
       <button role="tab" data-tab="list">List</button>
       <button role="tab" data-tab="calendar">Calendar</button>
       <button role="tab" data-tab="exams">Exams &amp; Quizzes</button>
+      <button role="tab" data-tab="schedule">My Schedule</button>
     </nav>
     <div class="panel tab-panel">
-      <div class="filterbar">
+      <div class="filterbar" id="filterbar">
         <div class="filters">
           <span class="lbl">Courses:</span>
           <span id="filters"></span>

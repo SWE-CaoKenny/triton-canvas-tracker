@@ -14,6 +14,7 @@ Built for UC San Diego students, but it works with **any school that uses Canvas
 - **Time-left countdowns** that turn from green to blue to orange to red as the deadline gets closer.
 - **Exams and quizzes stand out** with gold highlighting and a badge. Multi-day testing windows show as one entry.
 - **Grade impact.** Enter your syllabus's grading breakdown (for example "Midterms 40%, Final 45%, Homework 15%") and every card shows its share of your final grade, like "20% of grade". You can sort by it.
+- **My Schedule (UCSD):** paste your [Class Planner](https://classplanner.apps.ucsd.edu/) share link to see your weekly classes with times, rooms and professors, a campus map, walking times between back-to-back classes (with tight transfers and time conflicts flagged), and your midterms and finals, which also show up as countdowns.
 - **Add anything Canvas missed**, like an in-class midterm or a paper handout, with **+ Add Item**. Added items show in every tab, count toward grade weights, and can be edited or deleted.
 - **Check things off** as you finish them.
 - **Filter by course.**
@@ -24,6 +25,7 @@ Built for UC San Diego students, but it works with **any school that uses Canvas
 1. In Canvas, open **Calendar**, then click **Calendar Feed** (bottom right) and copy the link.
 2. Paste it into the tracker and click **Connect**.
 3. Optional: click **Grade weights** and copy each course's grading breakdown from the syllabus.
+4. Optional (UCSD): in Class Planner, click **Save & share**, copy the link, and paste it into the **My Schedule** tab.
 
 Don't want to share the link? You can download the `.ics` file from that same link and upload it instead. That's a one-time snapshot, so upload it again to update.
 
@@ -73,7 +75,9 @@ Browsers aren't allowed to read Canvas calendar feeds directly from another webs
 - doesn't store or log feed links or calendar data
 - rate-limits each IP address
 
-Everything else, including parsing, grade math and storage, happens in your browser.
+A second endpoint, `POST /api/schedule`, loads a UCSD Class Planner share page. It only accepts `https://classplanner.apps.ucsd.edu/view/…` links, reads the schedule data embedded in the page (see `planner.js`), and caches each schedule for 15 minutes to go easy on UCSD's servers.
+
+Everything else, including parsing, grade math and storage, happens in your browser. The campus map uses [Leaflet](https://leafletjs.com/) with © OpenStreetMap contributors.
 
 ## License
 

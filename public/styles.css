@@ -231,6 +231,55 @@ dialog::backdrop { background: rgba(24, 43, 73, .45); }
 .foot { color: var(--faint); font-size: 12px; text-align: center; line-height: 1.7; padding: 16px; border-top: 1px solid var(--border); background: #f8f9fa; }
 .foot span { display: block; }
 
+
+/* ---------- My Schedule ---------- */
+.sched { padding: 12px 14px 16px; }
+.sched-connect { max-width: 620px; padding: 18px 16px; }
+.sched-connect h3 { margin: 0 0 6px; color: var(--navy); font-size: 17px; }
+.sched-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
+.sched-title { font-size: 17px; font-weight: 700; color: var(--navy); }
+.sched-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.sched-actions a.btn { text-decoration: none; }
+.sched-next { margin-top: 12px; padding: 9px 12px; border: 1px solid var(--border); border-left: 5px solid var(--c); border-radius: 4px; background: #f8fbfd; font-size: 14px; }
+.sched-next .lbl { text-transform: uppercase; letter-spacing: .06em; margin-right: 8px; font-size: 11px; }
+.sched-warn { margin-top: 10px; padding: 8px 12px; background: var(--red-bg); color: var(--red); border: 1px solid #efc2bd; border-radius: 4px; font-size: 13px; font-weight: 500; }
+.sched-h { margin: 20px 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--navy); border-bottom: 2px solid var(--accent); padding-bottom: 4px; }
+.sched .fine { margin-top: 14px !important; }
+.mono { font-family: "Roboto Mono", monospace; font-size: 12px; }
+.stat.next b { color: var(--blue); }
+
+.wk { display: grid; grid-template-columns: 52px repeat(var(--cols), minmax(0, 1fr)); border: 1px solid var(--border); border-radius: 4px; overflow: hidden; background: #fff; }
+.wk-corner { background: var(--head); border-bottom: 1px solid var(--border); }
+.wk-dayhead { background: var(--head); color: var(--navy); font-weight: 700; font-size: 12px; text-align: center; padding: 6px 0; border-bottom: 1px solid var(--border); border-left: 1px solid var(--border-soft); }
+.wk-dayhead.today { background: var(--navy); color: #fff; box-shadow: inset 0 -3px 0 var(--accent); }
+.wk-hours { position: relative; background: #fafbfc; }
+.wk-hour { position: absolute; right: 6px; transform: translateY(-50%); font-size: 11px; color: var(--muted); white-space: nowrap; }
+.wk-hour:first-child { transform: none; }
+.wk-col { position: relative; border-left: 1px solid var(--border-soft); }
+.wk-col.today { background: #f7fbff; }
+.wk-line { position: absolute; left: 0; right: 0; border-top: 1px solid #edf0f3; }
+.wk-now { position: absolute; left: 0; right: 0; border-top: 2px solid var(--red); z-index: 3; }
+.wk-now::before { content: ""; position: absolute; left: -4px; top: -5px; width: 8px; height: 8px; border-radius: 50%; background: var(--red); }
+.wk-block {
+  position: absolute; z-index: 2; overflow: hidden; border-radius: 3px; padding: 3px 5px;
+  background: color-mix(in srgb, var(--c) 14%, #fff); border: 1px solid color-mix(in srgb, var(--c) 45%, #fff); border-left: 4px solid var(--c);
+  font-size: 11px; line-height: 1.25; color: var(--text); display: flex; flex-direction: column;
+}
+.wk-block b { font-size: 12px; color: color-mix(in srgb, var(--c) 70%, #000); }
+.wk-block .ty { font-weight: 500; font-size: 10px; }
+.wk-block .ins { color: var(--muted); }
+.wk-block span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wk-block.conflict { border-color: var(--red); box-shadow: 0 0 0 1px var(--red); background: repeating-linear-gradient(135deg, #fff, #fff 5px, #fdecea 5px, #fdecea 10px); }
+.wk-list { display: none; }
+
+.sched-two { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 16px; }
+.sched-map { height: 320px; border: 1px solid var(--border); border-radius: 4px; background: #e8edf2; }
+.map-pop { font: 13px/1.5 Roboto, Arial, sans-serif; }
+.leaflet-tooltip.map-label { background: var(--navy); color: #fff; border: 0; font: 700 10px Roboto, Arial, sans-serif; padding: 1px 5px; box-shadow: none; }
+.leaflet-tooltip.map-label::before { display: none; }
+.walk-tbl td { font-size: 12px; }
+.pill.done-pill { color: var(--faint); background: #eef0f2; }
+
 /* ---------- Small screens ---------- */
 @media (max-width: 760px) {
   .banner-date { display: none; }
@@ -266,4 +315,14 @@ dialog::backdrop { background: rgba(24, 43, 73, .45); }
   .w-row .w-hint { order: 4; }
   .w-head { display: none; }
   .feed-row { flex-direction: column; }
+  .sched-two { grid-template-columns: 1fr; }
+  .wk { display: none; }
+  .wk-list { display: block; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+  .wk-list-head { background: var(--head); color: var(--navy); font-weight: 700; font-size: 12px; padding: 5px 10px; }
+  .wk-list-day.today .wk-list-head { background: var(--navy); color: #fff; }
+  .wk-list-item { padding: 7px 10px; border-bottom: 1px solid var(--border-soft); border-left: 4px solid var(--c); font-size: 13px; }
+  .wk-list-item .tm { font: 500 12px "Roboto Mono", monospace; margin-right: 8px; color: var(--muted); }
+  .sched .tbl tr.row { grid-template-columns: 1fr 1fr; }
+  .sched .tbl tr.row td { grid-column: auto !important; grid-row: auto !important; text-align: left !important; }
+  .sched { padding: 10px; }
 }
