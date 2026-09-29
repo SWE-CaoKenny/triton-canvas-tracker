@@ -3,7 +3,7 @@
 
 const CFG = window.TRACKER_CONFIG;
 const H = 3600e3, D = 24 * H;
-const PALETTE = ["#4fd1c5", "#60a5fa", "#f472b6", "#fbbf24", "#a3e635", "#c084fc", "#fb7185", "#38bdf8", "#f97316", "#34d399"];
+const PALETTE = ["#00629B", "#6E963B", "#C4457B", "#E07B00", "#7B4FA0", "#008C95", "#B03A2E", "#3F7FBF", "#9A7B00", "#5B6770"];
 
 // ---------- Storage (browser-only; wrapped because storage can be unavailable) ----------
 
@@ -19,6 +19,8 @@ const state = {
   hidden: new Set(store.get("hidden", [])),
   weights: store.get("weights", {}),
   sort: store.get("sort", "due"),
+  tab: store.get("tab", "list"),
+  weekOffset: 0,
   host: store.get("host", CFG.canvasHost),
   showEvents: store.get("showEvents", false),
 };
@@ -160,7 +162,7 @@ const fmtPct = p => (p >= 10 ? p.toFixed(0) : p >= 1 ? p.toFixed(1) : p.toFixed(
 
 function courseColors() {
   const courses = [...new Set(state.items.map(i => i.course))].sort();
-  const saved = store.get("colors", {});
+  const saved = store.get("colors-light", {});
   const used = new Set(Object.values(saved));
   let next = 0;
   for (const c of courses) {
@@ -169,71 +171,88 @@ function courseColors() {
     saved[c] = PALETTE[next % PALETTE.length];
     used.add(saved[c]); next++;
   }
-  store.set("colors", saved);
+  store.set("colors-light", saved);
   return saved;
 }
 
 // ---------- Rendering ----------
 
-function urgency(ms) {
-  if (ms < 0) return "var(--red)";
-  if (ms < D) return "var(--red)";
-  if (ms < 3 * D) return "var(--orange)";
-  if (ms < 7 * D) return "var(--blue)";
-  return "var(--green)";
-}
-
-function countdown(ms) {
-  const late = ms < 0; ms = Math.abs(ms);
-  const d = Math.floor(ms / D), hr = Math.floor(ms % D / H), m = Math.floor(ms % H / 60e3);
-  let big, small = "";
-  if (d >= 2) { big = `${d}d`; small = `${hr}h`; }
-  else if (d >= 1) big = `${d}d ${hr}h`;
-  else if (hr >= 1) big = `${hr}h ${m}m`;
-  else big = `${m}m`;
-  return late ? [`-${big}`, "late"] : [big, small];
-}
-
-const fmtDue = t => new Date(t).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 const isExam = it => it.kind === "exam" || it.kind === "quiz";
-const CHECK_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>';
-
+const TYPE_LABEL = { exam: "Exam", quiz: "Quiz", assignment: "Assignment", "event-lite": "Practice", event: "Event" };
+const CHECK_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>';
+const fmtDue = t => new Date(t).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 const fmtDay = t => new Date(t).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+const fmtTime = t => new Date(t).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+const isAllDay = t => { const d = new Date(t); return d.getHours() === 23 && d.getMinutes() === 59; };
 
-function card(it, colors) {
-  const now = Date.now();
+function fmtSpan(ms) {
+  const d = Math.floor(ms / D), hr = Math.floor(ms % D / H), m = Math.floor(ms % H / 60e3);
+  if (d >= 1) return `${d}d ${hr}h`;
+  if (hr >= 1) return `${hr}h ${m}m`;
+  return `${m}m`;
+}
+
+function timeLeft(it, now) {
   const ms = it.due - now;
-  const notOpen = it.start && it.start > now;
-  let [big, small] = countdown(notOpen ? it.start - now : ms);
-  if (it.start && ms >= 0) small = notOpen ? "until open" : (small ? small + " left" : "left");
-  const fill = ms < 0 ? 100 : Math.max(4, Math.min(100, 100 - (ms / (14 * D)) * 100));
-  const share = gradeShare(it);
-  const done = state.done.has(it.uid);
+  if (ms < 0) return { text: `${fmtSpan(-ms)} late`, cls: "u-late" };
+  const cls = ms < D ? "u-red" : ms < 3 * D ? "u-orange" : ms < 7 * D ? "u-blue" : "u-green";
+  if (it.start && it.start > now) return { text: `opens in ${fmtSpan(it.start - now)}`, cls };
+  if (it.start) return { text: `${fmtSpan(ms)} left`, cls };
+  return { text: fmtSpan(ms), cls };
+}
 
-  return h("div", {
-      class: "card" + (isExam(it) ? " exam" : "") + (done ? " done" : ""),
-      style: { "--course": colors[it.course] || "#888", "--u": urgency(ms) },
-    },
-    h("div", { class: "card-top" },
-      h("div", { class: "countdown" }, big, small ? h("small", {}, small) : null),
-      h("button", {
-        class: "check", title: done ? "Mark not done" : "Mark done", "aria-label": done ? "Mark not done" : "Mark done",
-        onclick: () => {
-          done ? state.done.delete(it.uid) : state.done.add(it.uid);
-          store.set("done", [...state.done]);
-          render();
-        },
-      }, svg(CHECK_SVG)),
-    ),
-    (isExam(it) || share != null) && h("div", { class: "tags" },
-      isExam(it) && h("span", { class: "badge exam" }, it.kind === "exam" ? "★ Exam" : "Quiz"),
-      share != null && h("span", { class: "badge pct" + (share >= 10 ? " big" : ""), title: "Share of your final grade" }, `${fmtPct(share)} of grade`),
-    ),
-    h("p", { class: "title" }, it.link ? h("a", { href: it.link, target: "_blank", rel: "noopener" }, it.title) : it.title),
-    h("div", { class: "course" }, h("span", { class: "dot" }), shortCourse(it.course)),
-    h("div", { class: "bar" }, h("i", { style: { width: fill + "%" } })),
-    h("div", { class: "due" }, it.start ? `Window ${fmtDay(it.start)} – ${fmtDay(it.due)}` : "Due " + fmtDue(it.due)),
+function toggleDone(it) {
+  state.done.has(it.uid) ? state.done.delete(it.uid) : state.done.add(it.uid);
+  store.set("done", [...state.done]);
+  render();
+}
+
+function checkBtn(it) {
+  const done = state.done.has(it.uid);
+  return h("button", {
+    class: "check", title: done ? "Mark not done" : "Mark done", "aria-label": done ? "Mark not done" : "Mark done",
+    onclick: () => toggleDone(it),
+  }, svg(CHECK_SVG));
+}
+
+function titleEl(it) {
+  return it.link ? h("a", { href: it.link, target: "_blank", rel: "noopener" }, it.title) : it.title;
+}
+
+function row(it, colors, now, alt) {
+  const share = gradeShare(it);
+  const left = timeLeft(it, now);
+  return h("tr", { class: "row" + (alt ? " alt" : "") + (isExam(it) ? " exam" : "") + (state.done.has(it.uid) ? " done" : "") },
+    h("td", { class: "c-check" }, checkBtn(it)),
+    h("td", { class: "c-title" },
+      h("span", { class: "t-title" }, titleEl(it)),
+      isExam(it) && h("span", { class: "badge" }, it.kind === "exam" ? "Exam" : "Quiz")),
+    h("td", { class: "c-course" },
+      h("span", { class: "course-tag", style: { "--c": colors[it.course] || "#888" }, title: it.course },
+        h("span", { class: "sw" }), shortCourse(it.course))),
+    h("td", { class: "c-type" }, TYPE_LABEL[it.kind] || "Item"),
+    h("td", { class: "c-left" }, h("span", { class: "pill " + left.cls }, left.text)),
+    h("td", { class: "c-pct" }, share != null
+      ? h("span", { class: share >= 10 ? "pct-hi" : "", title: "Share of your final grade" }, fmtPct(share))
+      : h("span", { class: "pct-none" }, "—")),
+    h("td", { class: "c-date" }, it.start ? `${fmtDay(it.start)} – ${fmtDay(it.due)}` : fmtDue(it.due)),
   );
+}
+
+function table(groups, colors, now) {
+  const body = [];
+  for (const [label, items, cls] of groups) {
+    if (!items.length) continue;
+    if (label) body.push(h("tr", { class: "group " + (cls || "") }, h("td", { colspan: 7 }, label, h("span", { class: "count" }, `(${items.length})`))));
+    items.forEach((it, i) => body.push(row(it, colors, now, i % 2 === 1)));
+  }
+  if (!body.length) return h("div", { class: "empty" }, "Nothing here. You're all caught up 🎉");
+  return h("table", { class: "tbl" },
+    h("thead", {}, h("tr", {},
+      h("th", { class: "c-check" }, h("span", { class: "sr" }, "")),
+      h("th", {}, "Item"), h("th", {}, "Course"), h("th", {}, "Type"),
+      h("th", {}, "Time Left"), h("th", { class: "c-pct" }, "% of Grade"), h("th", {}, "Due"))),
+    h("tbody", {}, body));
 }
 
 function sortItems(list) {
@@ -243,67 +262,124 @@ function sortItems(list) {
   return list.sort((a, b) => a.due - b.due);
 }
 
-function section(title, items, colors, cls = "") {
+function doneSection(finished, colors, now) {
+  if (!finished.length) return null;
+  return h("details", { class: "done-section" },
+    h("summary", {}, h("span", { class: "arrow" }, "▸"), `Completed (${finished.length})`),
+    table([[null, finished.sort((a, b) => b.due - a.due)]], colors, now));
+}
+
+function renderList(active, finished, colors, now) {
+  const overdue = active.filter(it => it.due < now && now - it.due < 3 * D);
+  const soon = active.filter(it => it.due >= now && it.due - now < 3 * D);
+  const week = active.filter(it => it.due - now >= 3 * D && it.due - now < 7 * D);
+  const later = active.filter(it => it.due - now >= 7 * D);
   return [
-    h("div", { class: "section-title " + cls }, title),
-    items.length
-      ? h("div", { class: "grid" }, sortItems(items).map(it => card(it, colors)))
-      : h("div", { class: "empty" }, "Nothing here 🎉"),
+    table([
+      ["Overdue", sortItems(overdue), "over"],
+      ["Next 3 days", sortItems(soon)],
+      ["This week", sortItems(week)],
+      ["Later", sortItems(later)],
+    ], colors, now),
+    doneSection(finished, colors, now),
   ];
+}
+
+function renderExams(active, finished, colors, now) {
+  const upcoming = active.filter(it => isExam(it) && it.due >= now).sort((a, b) => (a.start || a.due) - (b.start || b.due));
+  return [
+    table([["Upcoming exams & quizzes", upcoming]], colors, now),
+    doneSection(finished.filter(isExam), colors, now),
+  ];
+}
+
+function renderCalendar(visible, colors, now) {
+  const today = new Date(now); today.setHours(0, 0, 0, 0);
+  const monday = new Date(today);
+  monday.setDate(today.getDate() - ((today.getDay() + 6) % 7) + state.weekOffset * 7);
+  const days = [...Array(7)].map((_, i) => { const d = new Date(monday); d.setDate(monday.getDate() + i); return d; });
+  const end = new Date(days[6]); end.setHours(23, 59, 59, 999);
+
+  const nav = h("div", { class: "cal-nav" },
+    h("button", { class: "btn small", onclick: () => { state.weekOffset--; render(); } }, "‹ Prev"),
+    h("button", { class: "btn small", onclick: () => { state.weekOffset = 0; render(); } }, "This week"),
+    h("button", { class: "btn small", onclick: () => { state.weekOffset++; render(); } }, "Next ›"),
+    h("span", { class: "range" }, `${fmtDay(days[0])} – ${fmtDay(days[6])}`),
+  );
+
+  const cols = days.map(day => {
+    const dayStart = day.getTime(), dayEnd = dayStart + D - 1;
+    const onDay = visible
+      .filter(it => it.start ? it.start <= dayEnd && it.due >= dayStart : it.due >= dayStart && it.due <= dayEnd)
+      .sort((a, b) => (isAllDay(a.due) - isAllDay(b.due)) || a.due - b.due);
+    const isToday = dayStart === today.getTime();
+    const wk = day.getDay() === 0 || day.getDay() === 6;
+    return h("div", { class: "cal-day" + (isToday ? " today" : "") + (wk ? " weekend" : "") },
+      h("div", { class: "cal-head" },
+        day.toLocaleDateString(undefined, { weekday: "short" }),
+        h("span", { class: "d" }, day.toLocaleDateString(undefined, { month: "numeric", day: "numeric" }))),
+      h("div", { class: "cal-body" },
+        onDay.length ? onDay.map(it => {
+          const inWindow = it.start && !(it.due >= dayStart && it.due <= dayEnd);
+          const tm = it.start ? (inWindow ? "window open" : "window closes") : isAllDay(it.due) ? "due today" : fmtTime(it.due);
+          return h("div", {
+              class: "cal-item" + (isExam(it) ? " exam" : "") + (it.start ? " window" : "") + (state.done.has(it.uid) ? " done" : ""),
+              style: { "--c": colors[it.course] || "#888" },
+            },
+            h("span", { class: "tm" }, tm),
+            titleEl(it),
+            h("span", { class: "cn" }, shortCourse(it.course)));
+        }) : h("div", { class: "cal-none" }, "—")),
+    );
+  });
+  return [nav, h("div", { class: "cal" }, cols)];
 }
 
 function renderFilters(colors) {
   const courses = [...new Set(state.items.map(i => i.course))].sort();
-  $("#filters").replaceChildren(...courses.map(c =>
-    h("button", {
-      class: "chip" + (state.hidden.has(c) ? " off" : ""), style: { "--c": colors[c] }, title: c,
-      onclick: () => {
-        state.hidden.has(c) ? state.hidden.delete(c) : state.hidden.add(c);
+  $("#filters").replaceChildren(...courses.map(c => {
+    const on = !state.hidden.has(c);
+    return h("label", { class: "cf" + (on ? "" : " off"), style: { "--c": colors[c] }, title: c },
+      h("input", { type: "checkbox", checked: on, onchange: () => {
+        on ? state.hidden.add(c) : state.hidden.delete(c);
         store.set("hidden", [...state.hidden]);
         render();
-      },
-    }, h("span", { class: "dot" }), shortCourse(c))
-  ));
+      } }),
+      h("span", { class: "sw" }), shortCourse(c));
+  }));
 }
 
 function render() {
   const connected = state.items.length > 0 || store.get("ics", null) != null;
   $("#setup").hidden = connected;
   $("#tracker").hidden = !connected;
-  $("#stats").hidden = !connected;
+  $("#subbar").hidden = !connected;
   if (!connected) return;
 
   const colors = courseColors();
   renderFilters(colors);
-  document.querySelectorAll(".seg button").forEach(b => b.classList.toggle("on", b.dataset.sort === state.sort));
+  document.querySelectorAll(".tabs button").forEach(b => {
+    const on = b.dataset.tab === state.tab;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-selected", on);
+  });
+  $("#sort").value = state.sort;
+  $("#sort-wrap").hidden = state.tab !== "list";
 
-  const t = Date.now();
+  const now = Date.now();
   const visible = state.items.filter(it =>
     !state.hidden.has(it.course) && (state.showEvents || it.kind !== "event"));  // "event-lite" = shown, not an exam
   const active = visible.filter(it => !state.done.has(it.uid));
-  const finished = visible.filter(it => state.done.has(it.uid) && t - it.due < 14 * D);
+  const finished = visible.filter(it => state.done.has(it.uid) && now - it.due < 14 * D);
 
-  const overdue = active.filter(it => it.due < t && t - it.due < 3 * D);
-  const soon = active.filter(it => it.due >= t && it.due - t < 3 * D);
-  const week = active.filter(it => it.due - t >= 3 * D && it.due - t < 7 * D);
-  const later = active.filter(it => it.due - t >= 7 * D);
+  $("#s-24").textContent = active.filter(it => it.due >= now && it.due - now < D).length;
+  $("#s-week").textContent = active.filter(it => it.due >= now && it.due - now < 7 * D).length;
+  $("#s-exam").textContent = active.filter(it => it.due >= now && isExam(it)).length;
 
-  $("#s-24").textContent = active.filter(it => it.due >= t && it.due - t < D).length;
-  $("#s-week").textContent = active.filter(it => it.due >= t && it.due - t < 7 * D).length;
-  $("#s-exam").textContent = active.filter(it => it.due >= t && isExam(it)).length;
-
-  const board = [];
-  if (overdue.length) board.push(...section("Overdue", overdue, colors, "over"));
-  board.push(...section("Next 3 days", soon, colors));
-  board.push(...section("This week", week, colors));
-  board.push(...section("Later", later, colors));
-  if (finished.length) {
-    board.push(h("details", { class: "done-section" },
-      h("summary", { class: "section-title" }, h("span", { class: "arrow" }, "▸"), ` Done (${finished.length})`),
-      h("div", { class: "grid" }, finished.sort((a, b) => b.due - a.due).map(it => card(it, colors))),
-    ));
-  }
-  $("#board").replaceChildren(...board);
+  const board = state.tab === "calendar" ? renderCalendar(visible, colors, now)
+    : state.tab === "exams" ? renderExams(active, finished, colors, now)
+    : renderList(active, finished, colors, now);
+  $("#board").replaceChildren(...board.filter(Boolean));
   renderStatus();
 }
 
@@ -439,8 +515,9 @@ $("#try-demo").addEventListener("click", () => {
 
 // ---------- Toolbar ----------
 
-document.querySelectorAll(".seg button").forEach(b => b.addEventListener("click", () => {
-  state.sort = b.dataset.sort; store.set("sort", state.sort); render();
+$("#sort").addEventListener("change", e => { state.sort = e.target.value; store.set("sort", state.sort); render(); });
+document.querySelectorAll(".tabs button").forEach(b => b.addEventListener("click", () => {
+  state.tab = b.dataset.tab; store.set("tab", state.tab); render();
 }));
 $("#btn-refresh").addEventListener("click", () => {
   if (store.get("feedUrl", null)) refresh();
@@ -466,7 +543,7 @@ $("#set-save").addEventListener("click", () => {
 $("#set-disconnect").addEventListener("click", () => {
   if (!confirm("Forget your feed link, checked-off items and grade weights on this browser?")) return;
   store.clear();
-  Object.assign(state, { items: [], done: new Set(), hidden: new Set(), weights: {}, sort: "due", host: CFG.canvasHost, showEvents: false });
+  Object.assign(state, { items: [], done: new Set(), hidden: new Set(), weights: {}, sort: "due", tab: "list", weekOffset: 0, host: CFG.canvasHost, showEvents: false });
   $("#settings-dlg").close();
   applyHost(); render();
 });

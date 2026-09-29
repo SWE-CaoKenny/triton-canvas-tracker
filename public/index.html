@@ -8,101 +8,128 @@
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-<div class="wrap">
-  <header class="top-bar">
+<header class="banner">
+  <div class="banner-inner">
     <div class="brand">
-      <img src="icon.svg" alt="" width="36" height="36">
+      <img src="icon.svg" alt="" width="34" height="34">
       <div>
-        <h1 id="app-name">Triton Tracker</h1>
-        <div class="sub" id="today"></div>
+        <div class="brand-name"><span id="app-name">Triton Tracker</span> <span class="unofficial">Unofficial</span></div>
+        <div class="brand-sub">Canvas deadlines, exams &amp; grade impact</div>
       </div>
     </div>
-    <div class="stats" id="stats" hidden>
-      <div class="stat hot"><b id="s-24">0</b><span>Next 24h</span></div>
-      <div class="stat"><b id="s-week">0</b><span>This week</span></div>
-      <div class="stat exam"><b id="s-exam">0</b><span>Exams &amp; quizzes</span></div>
+    <div class="banner-date" id="today"></div>
+  </div>
+</header>
+
+<div class="subbar" id="subbar" hidden>
+  <div class="subbar-inner">
+    <div class="stats">
+      <div class="stat hot"><b id="s-24">0</b> due in 24 hrs</div>
+      <div class="stat"><b id="s-week">0</b> due this week</div>
+      <div class="stat exam"><b id="s-exam">0</b> exams &amp; quizzes ahead</div>
     </div>
-  </header>
+    <div class="actions">
+      <button class="btn" id="btn-weights">Grade Weights</button>
+      <button class="btn" id="btn-refresh" title="Refresh from Canvas">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+        Refresh
+      </button>
+      <button class="btn" id="btn-settings">Settings</button>
+    </div>
+  </div>
+</div>
 
+<main class="wrap">
   <!-- Setup: shown until a feed is connected -->
-  <section id="setup" class="setup" hidden>
-    <h2>Connect your Canvas calendar</h2>
-    <p class="muted">Your assignments, quizzes and exams, sorted by how soon they're due and how much they count. Nothing to install and no Canvas password needed.</p>
+  <section id="setup" class="panel setup" hidden>
+    <div class="panel-head">Connect your Canvas calendar</div>
+    <div class="panel-body">
+      <p>See your assignments, quizzes and exams in one place, sorted by how soon they're due and how much they count. Nothing to install and no Canvas password needed.</p>
 
-    <ol class="steps">
-      <li>Open <a id="canvas-cal-link" href="https://canvas.ucsd.edu/calendar" target="_blank" rel="noopener">Canvas → Calendar</a>.</li>
-      <li>At the bottom right, click <b>Calendar Feed</b> and copy the link.</li>
-      <li>Paste it below.</li>
-    </ol>
+      <ol class="steps">
+        <li>Open <a id="canvas-cal-link" href="https://canvas.ucsd.edu/calendar" target="_blank" rel="noopener">Canvas → Calendar</a>.</li>
+        <li>At the bottom right, click <b>Calendar Feed</b> and copy the link.</li>
+        <li>Paste it below and click <b>Connect</b>.</li>
+      </ol>
 
-    <form id="feed-form" class="feed-form">
-      <input id="feed-input" type="url" placeholder="https://canvas.ucsd.edu/feeds/calendars/user_….ics" autocomplete="off" spellcheck="false" required>
-      <button class="btn primary" type="submit">Connect</button>
-    </form>
-    <div id="setup-error" class="error" role="alert"></div>
+      <form id="feed-form" class="feed-form">
+        <label for="feed-input" class="lbl">Calendar feed link</label>
+        <div class="feed-row">
+          <input id="feed-input" type="url" placeholder="https://canvas.ucsd.edu/feeds/calendars/user_….ics" autocomplete="off" spellcheck="false" required>
+          <button class="btn primary" type="submit">Connect</button>
+        </div>
+      </form>
+      <div id="setup-error" class="error" role="alert"></div>
 
-    <div class="or"><span>or</span></div>
-    <label class="upload">
-      <input id="file-input" type="file" accept=".ics,text/calendar" hidden>
-      <span>Upload a downloaded <b>.ics</b> file instead</span>
-    </label>
+      <div class="or"><span>or</span></div>
+      <label class="upload">
+        <input id="file-input" type="file" accept=".ics,text/calendar" hidden>
+        <span>Upload a downloaded <b>.ics</b> file instead</span>
+      </label>
 
-    <p class="demo-line"><button type="button" class="link" id="try-demo">Just looking? Try it with sample data</button></p>
+      <p class="demo-line"><button type="button" class="link" id="try-demo">Just looking? Try it with sample data</button></p>
 
-    <p class="fine">
-      Not at UCSD? <button type="button" class="link" id="change-school">Change your school's Canvas address</button>.<br>
-      Your feed link is saved only in this browser. Treat it like a password and don't share it.
-    </p>
+      <p class="fine">
+        Not at UCSD? <button type="button" class="link" id="change-school">Change your school's Canvas address</button>.<br>
+        Your feed link is saved only in this browser. Treat it like a password and don't share it.
+      </p>
+    </div>
   </section>
 
   <!-- Tracker -->
   <section id="tracker" hidden>
-    <div class="toolbar">
-      <div class="filters" id="filters"></div>
-      <div class="actions">
-        <div class="seg" role="group" aria-label="Sort">
-          <button data-sort="due" class="on">By due date</button>
-          <button data-sort="impact">By grade impact</button>
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-tab="list">List</button>
+      <button role="tab" data-tab="calendar">Calendar</button>
+      <button role="tab" data-tab="exams">Exams &amp; Quizzes</button>
+    </nav>
+    <div class="panel tab-panel">
+      <div class="filterbar">
+        <div class="filters">
+          <span class="lbl">Courses:</span>
+          <span id="filters"></span>
         </div>
-        <button class="btn" id="btn-weights">Grade weights</button>
-        <button class="btn icon" id="btn-refresh" title="Refresh from Canvas" aria-label="Refresh">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
-        </button>
-        <button class="btn icon" id="btn-settings" title="Settings" aria-label="Settings">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
-        </button>
+        <label class="sort" id="sort-wrap">
+          <span class="lbl">Sort by</span>
+          <select id="sort">
+            <option value="due">Due date</option>
+            <option value="impact">Grade impact</option>
+          </select>
+        </label>
       </div>
+      <div id="board"></div>
+      <div id="status" class="status"></div>
     </div>
-    <div id="status" class="status"></div>
-    <div id="board"></div>
   </section>
+</main>
 
-  <footer class="foot">
-    <span id="foot-note">Unofficial student project, not affiliated with UC San Diego.</span>
-    Your data stays in this browser. <a id="repo-link" href="https://github.com/" target="_blank" rel="noopener">Open source</a>
-  </footer>
-</div>
+<footer class="foot">
+  <span id="foot-note">Unofficial student project, not affiliated with UC San Diego.</span>
+  Your data stays in this browser. <a id="repo-link" href="https://github.com/" target="_blank" rel="noopener">Open source</a>
+</footer>
 
 <!-- Grade weights dialog -->
 <dialog id="weights-dlg">
   <form method="dialog" class="dlg">
     <div class="dlg-head">
-      <h3>Grade weights</h3>
+      <h3>Grade Weights</h3>
       <button class="x" value="close" aria-label="Close">×</button>
     </div>
-    <p class="muted small">Copy the grading breakdown from your syllabus. Items whose title contains a category's keywords get that category's weight, split evenly across the items.</p>
-    <label class="field">Course
-      <select id="w-course"></select>
-    </label>
-    <div id="w-rows"></div>
-    <div class="w-foot">
-      <button type="button" class="btn small" id="w-add">+ Add category</button>
-      <button type="button" class="btn small" id="w-preset">Use a typical template</button>
-      <span id="w-total" class="w-total"></span>
+    <div class="dlg-body">
+      <p class="muted small">Copy the grading breakdown from your syllabus. Items whose title contains a category's keywords get that category's weight, split evenly across the items.</p>
+      <label class="field">Course
+        <select id="w-course"></select>
+      </label>
+      <div id="w-rows"></div>
+      <div class="w-foot">
+        <button type="button" class="btn small" id="w-add">+ Add category</button>
+        <button type="button" class="btn small" id="w-preset">Use a typical template</button>
+        <span id="w-total" class="w-total"></span>
+      </div>
     </div>
     <div class="dlg-actions">
       <button class="btn primary" value="close">Done</button>
@@ -117,13 +144,15 @@
       <h3>Settings</h3>
       <button class="x" value="close" aria-label="Close">×</button>
     </div>
-    <label class="field">Your school's Canvas address
-      <input id="set-host" type="text" placeholder="canvas.ucsd.edu" spellcheck="false">
-    </label>
-    <label class="check-row">
-      <input id="set-events" type="checkbox">
-      Show all calendar events (lectures, office hours), not just assignments and exams
-    </label>
+    <div class="dlg-body">
+      <label class="field">Your school's Canvas address
+        <input id="set-host" type="text" placeholder="canvas.ucsd.edu" spellcheck="false">
+      </label>
+      <label class="check-row">
+        <input id="set-events" type="checkbox">
+        Show all calendar events (lectures, office hours), not just assignments and exams
+      </label>
+    </div>
     <div class="dlg-actions split">
       <button type="button" class="btn danger" id="set-disconnect">Disconnect &amp; forget my data</button>
       <button class="btn primary" value="close" id="set-save">Save</button>

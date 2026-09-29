@@ -1,6 +1,6 @@
 # Triton Tracker
 
-See every Canvas assignment, quiz and exam in one dark-mode dashboard, sorted by **how soon it's due** and **how much it counts toward your grade**.
+See every Canvas assignment, quiz and exam in one WebReg-style dashboard, sorted by **how soon it's due** and **how much it counts toward your grade**.
 
 Built for UC San Diego students, but it works with **any school that uses Canvas**.
 
@@ -10,8 +10,9 @@ Built for UC San Diego students, but it works with **any school that uses Canvas
 
 ## Features
 
-- **Urgency cards.** Each card shows a live countdown and turns from green to blue to orange to red as the deadline gets closer.
-- **Exams and quizzes stand out** with a gold glow and a badge.
+- **Three views, WebReg-style:** a **List** tab (grouped into Overdue, Next 3 days, This week and Later), a weekly **Calendar**, and an **Exams & Quizzes** tab, similar to WebReg's Finals view.
+- **Time-left countdowns** that turn from green to blue to orange to red as the deadline gets closer.
+- **Exams and quizzes stand out** with gold highlighting and a badge. Multi-day testing windows show as one entry.
 - **Grade impact.** Enter your syllabus's grading breakdown (for example "Midterms 40%, Final 45%, Homework 15%") and every card shows its share of your final grade, like "20% of grade". You can sort by it.
 - **Check things off** as you finish them.
 - **Filter by course.**
