@@ -164,7 +164,7 @@ async function handleFeed(req, res) {
     send(res, 200, body, "text/calendar; charset=utf-8", { "Cache-Control": "no-store" });
   } catch (e) {
     console.warn(`feed fetch failed: ${e.message}`); // never log the feed URL itself
-    const msg = e.status === 404 || e.status === 401
+    const msg = [400, 401, 403, 404].includes(e.status)
       ? "Canvas didn't recognize that feed link. Copy it again from Canvas → Calendar → Calendar Feed."
       : "Couldn't load the feed from Canvas. Check the link and try again.";
     send(res, 502, msg);
