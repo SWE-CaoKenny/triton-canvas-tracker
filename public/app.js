@@ -781,58 +781,68 @@ function scheduleConnectForm() {
     form, err);
 }
 
-// Keep one Leaflet map alive across re-renders so panning isn't reset every minute.
-const mapState = { el: null, map: null, layer: null, key: "" };
-let leafletPromise = null;
-function loadLeaflet() {
-  if (window.L) return Promise.resolve(window.L);
-  return leafletPromise ||= new Promise((resolve, reject) => {
+// Keep one map alive across re-renders so panning isn't reset every minute.
+// Tiles: OpenFreeMap (free, no API key, OpenStreetMap data) rendered with MapLibre GL.
+const MAP_STYLE = "https://tiles.openfreemap.org/styles/positron";
+const MAPLIBRE = "https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.min";
+const mapState = { el: null, map: null, markers: [], key: "", pts: [], fitted: false };
+let mapLibPromise = null;
+function loadMapLibre() {
+  if (window.maplibregl) return Promise.resolve(window.maplibregl);
+  return mapLibPromise ||= new Promise((resolve, reject) => {
     const css = document.createElement("link");
-    css.rel = "stylesheet"; css.href = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css";
+    css.rel = "stylesheet"; css.href = MAPLIBRE + ".css";
     document.head.append(css);
     const js = document.createElement("script");
-    js.src = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js";
-    js.onload = () => resolve(window.L); js.onerror = reject;
+    js.src = MAPLIBRE + ".js";
+    js.onload = () => resolve(window.maplibregl); js.onerror = reject;
     document.head.append(js);
   });
 }
 
 function scheduleMap(sch, colors) {
-  if (!mapState.el) mapState.el = h("div", { class: "sched-map", role: "img", "aria-label": "Map of your class buildings" });
+  if (!mapState.el) mapState.el = h("div", { class: "sched-map", role: "region", "aria-label": "Map of your class buildings" });
   const key = JSON.stringify(sch.locations) + JSON.stringify(sch.sections.map(s => s.course));
-  loadLeaflet().then(L => {
+  loadMapLibre().then(ml => {
     if (!mapState.map) {
-      mapState.map = L.map(mapState.el, { scrollWheelZoom: false });
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-      }).addTo(mapState.map);
+      mapState.map = new ml.Map({
+        container: mapState.el, style: MAP_STYLE,
+        center: [-117.2376, 32.8801], zoom: 15,
+        cooperativeGestures: true,           // don't hijack page scrolling
+        attributionControl: { compact: true },
+      });
+      mapState.map.addControl(new ml.NavigationControl({ showCompass: false }), "top-left");
     }
     if (mapState.key !== key) {
       mapState.key = key;
-      if (mapState.layer) mapState.layer.remove();
-      mapState.layer = L.layerGroup().addTo(mapState.map);
-      const pts = [];
+      mapState.markers.forEach(m => m.remove());
+      mapState.markers = [];
+      mapState.pts = [];
       for (const loc of sch.locations) {
         const here = sch.sections.filter(s => s.meetings.some(m => m.buildingCode === loc.code));
         const color = here.length ? scheduleColor(here[0].course, colors) : "#182B49";
+        const pin = h("div", { class: "map-pin", style: { "--c": color }, title: loc.name },
+          h("span", { class: "dot" }), h("span", { class: "tag" }, loc.code));
         const popup = h("div", { class: "map-pop" },
           h("b", {}, loc.name), h("br"),
           ...here.flatMap(s => [`${s.course} ${s.type} · ${[...new Set(s.meetings.filter(m => m.buildingCode === loc.code).map(m => m.room))].join(", ")}`, h("br")]),
           h("a", { href: mapsUrl(`${loc.lat},${loc.lng}`), target: "_blank", rel: "noopener" }, "Directions ↗"));
-        L.circleMarker([loc.lat, loc.lng], { radius: 9, color: "#fff", weight: 2, fillColor: color, fillOpacity: 1 })
-          .bindPopup(popup).bindTooltip(loc.code, { permanent: true, direction: "right", className: "map-label" })
-          .addTo(mapState.layer);
-        pts.push([loc.lat, loc.lng]);
+        mapState.markers.push(new ml.Marker({ element: pin, anchor: "left", offset: [-7, 0] })
+          .setLngLat([loc.lng, loc.lat])
+          .setPopup(new ml.Popup({ offset: 12, closeButton: true }).setDOMContent(popup))
+          .addTo(mapState.map));
+        mapState.pts.push([loc.lng, loc.lat]);
       }
-      mapState.pts = pts;
       mapState.fitted = false;
     }
     // Size and fit only once the container is on the page and laid out.
     requestAnimationFrame(() => {
       if (!mapState.el.isConnected || !mapState.el.clientHeight) return;
-      mapState.map.invalidateSize();
+      mapState.map.resize();
       if (!mapState.fitted && mapState.pts.length) {
-        mapState.map.fitBounds(mapState.pts, { padding: [40, 40], maxZoom: 17 });
+        const b = new ml.LngLatBounds(mapState.pts[0], mapState.pts[0]);
+        mapState.pts.forEach(p => b.extend(p));
+        mapState.map.fitBounds(b, { padding: 50, maxZoom: 16.5, duration: 0 });
         mapState.fitted = true;
       }
     });

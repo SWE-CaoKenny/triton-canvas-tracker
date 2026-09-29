@@ -275,8 +275,10 @@ dialog::backdrop { background: rgba(24, 43, 73, .45); }
 .sched-two { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 16px; }
 .sched-map { height: 320px; border: 1px solid var(--border); border-radius: 4px; background: #e8edf2; }
 .map-pop { font: 13px/1.5 Roboto, Arial, sans-serif; }
-.leaflet-tooltip.map-label { background: var(--navy); color: #fff; border: 0; font: 700 10px Roboto, Arial, sans-serif; padding: 1px 5px; box-shadow: none; }
-.leaflet-tooltip.map-label::before { display: none; }
+.map-pin { display: flex; align-items: center; gap: 3px; cursor: pointer; }
+.map-pin .dot { width: 14px; height: 14px; border-radius: 50%; background: var(--c); border: 2px solid #fff; box-shadow: 0 1px 3px rgba(0,0,0,.35); }
+.map-pin .tag { background: var(--navy); color: #fff; font: 700 10px Roboto, Arial, sans-serif; padding: 1px 5px; border-radius: 3px; }
+.maplibregl-popup-content { border-radius: 4px; padding: 10px 12px; }
 .walk-tbl td { font-size: 12px; }
 .pill.done-pill { color: var(--faint); background: #eef0f2; }
 

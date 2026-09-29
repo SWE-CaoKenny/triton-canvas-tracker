@@ -77,7 +77,7 @@ Browsers aren't allowed to read Canvas calendar feeds directly from another webs
 
 A second endpoint, `POST /api/schedule`, loads a UCSD Class Planner share page. It only accepts `https://classplanner.apps.ucsd.edu/view/…` links, reads the schedule data embedded in the page (see `planner.js`), and caches each schedule for 15 minutes to go easy on UCSD's servers.
 
-Everything else, including parsing, grade math and storage, happens in your browser. The campus map uses [Leaflet](https://leafletjs.com/) with © OpenStreetMap contributors.
+Everything else, including parsing, grade math and storage, happens in your browser. The campus map uses [MapLibre GL](https://maplibre.org/) with free, keyless tiles from [OpenFreeMap](https://openfreemap.org/) (© OpenMapTiles, data © OpenStreetMap contributors).
 
 ## License
 
