@@ -202,8 +202,22 @@
         <input id="set-events" type="checkbox">
         Show all calendar events (lectures, office hours), not just assignments and exams
       </label>
-      <div class="token-box" id="token-box">
+      <div class="token-box" id="bm-box">
         <div class="token-head">Find homework posted only in Canvas Modules</div>
+        <p class="muted small">Some classes post homework as PDFs in Modules (like <code>HW1.pdf</code>) instead of on the calendar. The <b>Triton Sync</b> bookmark finds them and estimates due dates from when they were posted. No install needed.</p>
+        <p class="bm-wrap"><a id="bm-link" class="bm-link" href="#" title="Drag me to your bookmarks bar">⇪ Triton Sync</a> <span class="muted small" id="bm-ready">Loading…</span></p>
+        <ol class="small token-steps">
+          <li><b>Drag</b> the button above to your bookmarks bar (if it's hidden, press <kbd>⌘</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd>, or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd> on Windows).</li>
+          <li>Open any <b>Canvas</b> page and click the bookmark. It scans your modules using the Canvas login already in your browser.</li>
+          <li>Click <b>Send to Triton Tracker</b>. Run it again when new homework is posted (about once a week).</li>
+        </ol>
+        <div id="bm-msg" class="small" role="status"></div>
+        <p class="fine">Read-only, and the results go straight to this page through the link; nothing is sent to the Triton Tracker server. For automatic syncing and exact Gradescope due dates, use the <b>Triton Tracker Sync</b> browser extension instead.</p>
+      </div>
+      <div class="token-box" id="token-box">
+        <div class="token-head">Or: use a Canvas access token</div>
+        <p class="muted small" id="token-ucsd-note" hidden>UC San Diego doesn't allow students to create access tokens. Use the Triton Sync bookmark above instead.</p>
+        <div id="token-body">
         <p class="muted small">Some classes post homework as PDFs in Modules (like <code>HW1.pdf</code>) instead of on the calendar. With a Canvas access token, Triton Tracker finds them and estimates due dates from when they were posted. The <b>Triton Tracker Sync</b> extension does this too, plus exact Gradescope dates.</p>
         <ol class="small token-steps">
           <li>In Canvas, open <a id="token-link" href="https://canvas.ucsd.edu/profile/settings" target="_blank" rel="noopener">Account → Settings</a>.</li>
@@ -217,6 +231,7 @@
         <div id="token-msg" class="small" role="status"></div>
         <p class="fine">⚠️ A token can do anything you can do in Canvas, so treat it like a password. It's saved only in this browser and sent to the Triton Tracker server just to read Canvas. It's never stored or logged there. You can delete it any time in Canvas → Settings.</p>
         <button type="button" class="btn small danger" id="token-remove" hidden>Remove token</button>
+        </div>
       </div>
     </div>
     <div class="dlg-actions split">

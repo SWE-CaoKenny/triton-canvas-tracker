@@ -282,6 +282,15 @@ async function handleSchedule(req, res) {
   }
 }
 
+// The bookmarklet is one self-contained script: shared helpers + Canvas scanner + UI,
+// wrapped so nothing leaks into the Canvas page's globals (`self` is shadowed).
+function serveBookmarklet(res) {
+  const files = ["extension/shared.js", "extension/canvas-scan.js", "public/bookmarklet-main.js"];
+  Promise.all(files.map(f => fs.promises.readFile(path.join(__dirname, f), "utf8")))
+    .then(parts => send(res, 200, `(()=>{const self={};\n${parts.join("\n;\n")}\n})();`, "text/javascript; charset=utf-8", { "Cache-Control": "no-cache" }))
+    .catch(() => send(res, 500, "Bookmarklet unavailable"));
+}
+
 function serveStatic(res, pathname) {
   const rel = pathname === "/" ? "index.html" : decodeURIComponent(pathname).replace(/^\/+/, "");
   const file = path.resolve(PUBLIC_DIR, rel);
@@ -298,6 +307,7 @@ const server = http.createServer((req, res) => {
   if (url.pathname === "/api/feed") return handleFeed(req, res);
   if (url.pathname === "/api/schedule") return handleSchedule(req, res);
   if (url.pathname === "/api/canvas-scan") return handleCanvasScan(req, res);
+  if (url.pathname === "/bookmarklet.js") return serveBookmarklet(res);
   if (url.pathname === "/lib/shared.js") return fs.readFile(path.join(__dirname, "extension", "shared.js"), (err, data) =>
     err ? send(res, 404, "Not found") : send(res, 200, data, "text/javascript; charset=utf-8"));
   if (req.method !== "GET" && req.method !== "HEAD") return send(res, 405, "Method not allowed");

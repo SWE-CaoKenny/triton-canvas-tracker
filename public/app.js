@@ -27,6 +27,8 @@ const state = {
   custom: store.get("custom", []),  // items the user added by hand
   synced: store.get("synced", null),  // homework from the Triton Tracker Sync extension
   tokenSync: store.get("tokenSync", null),  // homework from the website's Canvas-token scan
+  bmSync: store.get("bmSync", null),        // homework imported by the Triton Sync bookmarklet
+  flash: null,
   scanning: false,
   undone: new Set(store.get("undone", [])),  // submitted-on-Gradescope items the user un-checked
   dismissedUndated: new Set(store.get("dismissedUndated", [])),
@@ -452,10 +454,17 @@ function renderStatus(msg) {
       ext.syncing ? "Sync extension: checking Canvas modules & Gradescope…"
         : `Sync extension: ${sy && sy.at ? "updated " + fmt(sy.at) : "connected"}${needs.length ? ` (log in to ${needs.join(" & ")} to update)` : ""}`);
     if (ext.present && !ext.syncing) el.append(" ", h("button", { class: "link", onclick: () => askExtension("syncNow") }, "Sync now"));
-  } else if (state.tokenSync) {
+  } else if (localSync()) {
+    const ls = localSync();
     if (el.textContent) el.append(" · ");
-    el.append(state.scanning ? "Module scan: checking Canvas…" : `Module scan: updated ${fmt(state.tokenSync.at)}`, " ",
-      h("button", { class: "link", onclick: () => scanWithToken({ quiet: false }) }, "Scan now"));
+    if (state.flash) el.append(h("span", { class: "flash" }, state.flash), " · ");
+    if (ls.source === "bookmarklet") {
+      const stale = Date.now() - (ls.at || 0) > 7 * D;
+      el.append(`Module scan: updated ${fmt(ls.at)}${stale ? ". Click Triton Sync on a Canvas page to refresh" : ""}`);
+    } else {
+      el.append(state.scanning ? "Module scan: checking Canvas…" : `Module scan: updated ${fmt(ls.at)}`, " ",
+        h("button", { class: "link", onclick: () => scanWithToken({ quiet: false }) }, "Scan now"));
+    }
   } else {
     if (el.textContent) el.append(" · ");
     el.append(h("button", { class: "link", onclick: openSettings }, "Homework only posted as PDFs in Modules? Find it"));
@@ -485,7 +494,8 @@ function rebuildItems() {
 // calendar already has for that course around the same time.
 const normTitle = t => String(t || "").toLowerCase().replace(/\.(pdf|docx?)$/, "").replace(/homework/g, "hw").replace(/[^a-z0-9]/g, "");
 // The extension's data wins (it also has Gradescope); otherwise use the token scan.
-const syncSource = () => (state.synced && state.extension.present ? state.synced : state.tokenSync || state.synced);
+const localSync = () => [state.tokenSync, state.bmSync].filter(Boolean).sort((a, b) => (b.at || 0) - (a.at || 0))[0] || null;
+const syncSource = () => (state.synced && state.extension.present ? state.synced : localSync() || state.synced);
 
 function syncedItems() {
   const sy = syncSource();
@@ -655,7 +665,27 @@ $("#btn-weights").addEventListener("click", openWeights);
 
 // ---------- Settings dialog ----------
 
+let bookmarkletReady = false;
+async function buildBookmarklet() {
+  if (bookmarkletReady) return;
+  try {
+    const code = (await (await fetch("/bookmarklet.js")).text()).replace("__TT_ORIGIN__", location.origin);
+    $("#bm-link").href = "javascript:" + encodeURIComponent(code);
+    $("#bm-ready").textContent = "← drag this to your bookmarks bar";
+    bookmarkletReady = true;
+  } catch { $("#bm-ready").textContent = "Couldn't load the bookmark. Refresh and try again."; }
+}
+$("#bm-link").addEventListener("click", e => {
+  e.preventDefault();
+  $("#bm-msg").textContent = "Drag the button to your bookmarks bar instead of clicking it here, then click it while you're on a Canvas page.";
+});
+
 function openSettings() {
+  buildBookmarklet();
+  const isUcsd = /(^|\.)canvas\.ucsd\.edu$/i.test(state.host || CFG.canvasHost);
+  $("#token-ucsd-note").hidden = !isUcsd;
+  $("#token-body").hidden = isUcsd;
+  $("#bm-msg").textContent = state.bmSync ? `Last import: ${(state.bmSync.items || []).length + (state.bmSync.undated || []).length} items · ${new Date(state.bmSync.at).toLocaleString()}` : "";
   $("#set-host").value = state.host || CFG.canvasHost;
   $("#token-link").href = `https://${state.host || CFG.canvasHost}/profile/settings`;
   const has = !!store.get("canvasToken", null);
@@ -673,6 +703,47 @@ $("#set-save").addEventListener("click", () => {
   state.showEvents = $("#set-events").checked; store.set("showEvents", state.showEvents);
   applyHost(); render();
 });
+// ---------- Import from the Triton Sync bookmarklet (#tt-import=… in the URL) ----------
+
+function importFromHash() {
+  const m = location.hash.match(/^#tt-import=([A-Za-z0-9_-]+)$/);
+  if (!m) return;
+  history.replaceState(null, "", location.pathname + location.search);   // don't keep data in the URL
+  let p;
+  try {
+    const b64 = m[1].replace(/-/g, "+").replace(/_/g, "/");
+    p = JSON.parse(decodeURIComponent(escape(atob(b64))));
+  } catch { state.flash = "Couldn't read that import. Try the bookmark again."; return; }
+  const str = (v, n = 300) => typeof v === "string" ? v.slice(0, n) : "";
+  const num = v => Number.isFinite(v) ? v : null;
+  const okLink = v => /^https:\/\//.test(v || "") ? str(v, 1000) : null;
+  if (!p || p.v !== 1 || !Array.isArray(p.hw)) { state.flash = "That import isn't from Triton Sync."; return; }
+  const hw = p.hw.slice(0, 400).filter(x => x && x.uid && x.title).map(x => ({
+    uid: str(x.uid, 100), title: str(x.title), course: str(x.course, 80), due: num(x.due), posted: num(x.posted),
+    postedFrom: str(x.postedFrom, 40), link: okLink(x.link), module: str(x.module, 120),
+    hw: TTShared.homeworkKey(str(x.title)),
+  }));
+  const known = (Array.isArray(p.known) ? p.known : []).slice(0, 400).filter(k => k && k.title && num(k.due)).map(k => ({
+    course: str(k.course, 80), title: str(k.title), due: num(k.due), posted: num(k.posted), hw: TTShared.homeworkKey(str(k.title)),
+  }));
+  const { items, undated } = TTShared.mergeHomework(hw, [], known);
+  state.bmSync = { items, undated, at: num(p.at) || Date.now(), status: { canvas: "ok" }, source: "bookmarklet", courses: num(p.courses) };
+  store.set("bmSync", state.bmSync);
+  const est = items.filter(i => i.estimated).length;
+  state.flash = `Imported ${hw.length} homework item${hw.length === 1 ? "" : "s"} from Canvas modules${est ? ` (${est} estimated)` : ""}`;
+  setTimeout(() => { state.flash = null; renderStatus(); }, 15000);
+  rebuildItems();
+}
+window.addEventListener("hashchange", () => { importFromHash(); render(); });
+
+// Another tab imported or scanned: pick up its results here too.
+window.addEventListener("storage", e => {
+  const key = { "tt:bmSync": "bmSync", "tt:tokenSync": "tokenSync", "tt:synced": "synced" }[e.key];
+  if (!key) return;
+  try { state[key] = JSON.parse(e.newValue); } catch { state[key] = null; }
+  rebuildItems(); render();
+});
+
 // ---------- Canvas-token module scan (website-only alternative to the extension) ----------
 
 function tokenMsg(text, cls) { const el = $("#token-msg"); el.textContent = text; el.className = "small " + (cls || ""); }
@@ -721,7 +792,7 @@ $("#token-remove").addEventListener("click", () => {
 $("#set-disconnect").addEventListener("click", () => {
   if (!confirm("Forget your feed link, checked-off items and grade weights on this browser?")) return;
   store.clear();
-  Object.assign(state, { items: [], feedItems: [], custom: [], schedule: null, scheduleError: null, synced: null, tokenSync: null, undone: new Set(), dismissedUndated: new Set(), done: new Set(), hidden: new Set(), weights: {}, sort: "due", tab: "list", weekOffset: 0, host: CFG.canvasHost, showEvents: false });
+  Object.assign(state, { items: [], feedItems: [], custom: [], schedule: null, scheduleError: null, synced: null, tokenSync: null, bmSync: null, undone: new Set(), dismissedUndated: new Set(), done: new Set(), hidden: new Set(), weights: {}, sort: "due", tab: "list", weekOffset: 0, host: CFG.canvasHost, showEvents: false });
   $("#settings-dlg").close();
   applyHost(); render();
 });
@@ -1257,6 +1328,7 @@ document.documentElement.style.setProperty("--accent-ink", CFG.accentInk);
 $("#today").textContent = new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
 applyHost();
 
+if (location.hash.startsWith("#tt-import=") && window.TTShared) importFromHash();
 const cached = store.get("ics", null);
 if (cached) { try { loadIcs(cached, { save: false }); } catch { render(); } }
 else render();

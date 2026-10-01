@@ -193,6 +193,12 @@ details.done-section[open] summary .arrow { transform: rotate(90deg); }
 .badge.est { background: #fff3df; color: var(--orange); border: 1px dashed #e0b066; }
 .pill.est { border: 1px dashed currentColor; }
 .est-fix { font-size: 11px; margin-left: 6px; }
+.bm-wrap { margin: 10px 0 !important; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.bm-link { display: inline-block; background: var(--navy); color: #fff !important; text-decoration: none; font-weight: 700; padding: 7px 14px; border-radius: 4px; border-bottom: 3px solid var(--accent); cursor: grab; }
+.bm-link:active { cursor: grabbing; }
+kbd { font: 11px "Roboto Mono", monospace; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 3px; padding: 0 4px; background: #fff; }
+#bm-msg { margin-top: 4px; }
+.flash { color: var(--green); font-weight: 600; }
 .status { color: var(--faint); font-size: 12px; padding: 8px 12px; border-top: 1px solid var(--border-soft); background: #fbfcfd; }
 
 /* ---------- Calendar ---------- */
