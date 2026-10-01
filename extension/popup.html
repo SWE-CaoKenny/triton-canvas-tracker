@@ -1,0 +1,38 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { width: 300px; margin: 0; font: 13px/1.45 -apple-system, Roboto, Arial, sans-serif; color: #1f2a37; }
+  header { background: #182B49; color: #fff; padding: 10px 12px; border-bottom: 3px solid #FFCD00; display: flex; align-items: center; gap: 8px; font-weight: 700; }
+  header img { width: 22px; height: 22px; border-radius: 4px; }
+  main { padding: 10px 12px 12px; }
+  .row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid #e3e9ef; }
+  .ok { color: #2e7d32; font-weight: 600; }
+  .login { color: #b3261e; font-weight: 600; }
+  .error { color: #a15c00; font-weight: 600; }
+  .muted { color: #5b6770; font-size: 12px; }
+  .hint { background: #fdecea; color: #b3261e; border-radius: 4px; padding: 6px 8px; margin-top: 8px; font-size: 12px; }
+  .hint a { color: #b3261e; }
+  button { width: 100%; margin-top: 8px; padding: 7px; border-radius: 4px; border: 1px solid #aeb9c4; background: #fff; color: #182B49; font-weight: 600; cursor: pointer; }
+  button.primary { background: #00629B; border-color: #00629B; color: #fff; }
+  label { display: flex; gap: 8px; align-items: center; margin-top: 10px; font-size: 12px; }
+</style>
+</head>
+<body>
+<header><img src="icons/icon32.png" alt="">Triton Tracker Sync</header>
+<main>
+  <div class="row"><span>Canvas modules</span><span id="canvas">…</span></div>
+  <div class="row"><span>Gradescope</span><span id="gs">…</span></div>
+  <div class="row"><span>Homework found</span><span id="count">…</span></div>
+  <div class="muted" id="last"></div>
+  <div id="hints"></div>
+  <button class="primary" id="sync">Sync now</button>
+  <button id="open">Open Triton Tracker</button>
+  <label><input type="checkbox" id="bg"> Check automatically every 3 hours</label>
+  <button id="diag">Copy diagnostics</button>
+  <div class="muted" id="diagMsg"></div>
+</main>
+<script src="popup.js"></script>
+</body>
+</html>

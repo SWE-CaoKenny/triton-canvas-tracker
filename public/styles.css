@@ -178,6 +178,10 @@ details.done-section summary { cursor: pointer; padding: 10px 12px; font-weight:
 details.done-section summary::-webkit-details-marker { display: none; }
 details.done-section summary .arrow { display: inline-block; transition: transform .15s; margin-right: 4px; }
 details.done-section[open] summary .arrow { transform: rotate(90deg); }
+.undated summary { color: var(--orange); }
+.undated-note { margin: 0 12px 8px; }
+.undated .c-pct { width: auto; white-space: nowrap; }
+.status .link { font-size: 12px; }
 .status { color: var(--faint); font-size: 12px; padding: 8px 12px; border-top: 1px solid var(--border-soft); background: #fbfcfd; }
 
 /* ---------- Calendar ---------- */

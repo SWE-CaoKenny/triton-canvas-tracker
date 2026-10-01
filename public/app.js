@@ -25,6 +25,10 @@ const state = {
   showEvents: store.get("showEvents", false),
   feedItems: [],
   custom: store.get("custom", []),  // items the user added by hand
+  synced: store.get("synced", null),  // homework from the Triton Tracker Sync extension
+  undone: new Set(store.get("undone", [])),  // submitted-on-Gradescope items the user un-checked
+  dismissedUndated: new Set(store.get("dismissedUndated", [])),
+  extension: { present: false, syncing: false, version: null },
   schedule: store.get("schedule", null),  // parsed UCSD Class Planner schedule
   scheduleError: null,
 };
@@ -205,14 +209,24 @@ function timeLeft(it, now) {
   return { text: fmtSpan(ms), cls };
 }
 
+// Items submitted on Gradescope count as done unless you un-check them.
+const isDone = it => state.done.has(it.uid) || (!!it.submitted && !state.undone.has(it.uid));
+
 function toggleDone(it) {
-  state.done.has(it.uid) ? state.done.delete(it.uid) : state.done.add(it.uid);
+  if (isDone(it)) {
+    state.done.delete(it.uid);
+    if (it.submitted) state.undone.add(it.uid);
+  } else {
+    state.done.add(it.uid);
+    state.undone.delete(it.uid);
+  }
+  store.set("undone", [...state.undone]);
   store.set("done", [...state.done]);
   render();
 }
 
 function checkBtn(it) {
-  const done = state.done.has(it.uid);
+  const done = isDone(it);
   return h("button", {
     class: "check", title: done ? "Mark not done" : "Mark done", "aria-label": done ? "Mark not done" : "Mark done",
     onclick: () => toggleDone(it),
@@ -227,13 +241,15 @@ function titleEl(it) {
 function row(it, colors, now, alt) {
   const share = gradeShare(it);
   const left = timeLeft(it, now);
-  return h("tr", { class: "row" + (alt ? " alt" : "") + (isExam(it) ? " exam" : "") + (state.done.has(it.uid) ? " done" : "") },
+  return h("tr", { class: "row" + (alt ? " alt" : "") + (isExam(it) ? " exam" : "") + (isDone(it) ? " done" : "") },
     h("td", { class: "c-check" }, checkBtn(it)),
     h("td", { class: "c-title" },
       h("span", { class: "t-title" }, titleEl(it)),
       isExam(it) && h("span", { class: "badge" }, it.kind === "exam" ? "Exam" : "Quiz"),
       it.custom && h("span", { class: "badge added", title: "You added this item" }, "Added"),
-      it.planner && h("span", { class: "badge added", title: "From your Class Planner schedule" }, "Planner")),
+      it.planner && h("span", { class: "badge added", title: "From your Class Planner schedule" }, "Planner"),
+      it.source === "gradescope" && h("span", { class: "badge added", title: "Found on Gradescope by the sync extension" }, "Gradescope"),
+      it.source === "canvas-module" && h("span", { class: "badge added", title: "Found in Canvas modules by the sync extension" }, "Module")),
     h("td", { class: "c-course" },
       h("span", { class: "course-tag", style: { "--c": colors[it.course] || "#888" }, title: it.course },
         h("span", { class: "sw" }), shortCourse(it.course))),
@@ -288,8 +304,28 @@ function renderList(active, finished, colors, now) {
       ["This week", sortItems(week)],
       ["Later", sortItems(later)],
     ], colors, now),
+    undatedSection(colors),
     doneSection(finished, colors, now),
   ];
+}
+
+function undatedSection(colors) {
+  const list = undatedHomework().filter(u => !state.hidden.has(feedCourseFor(shortCourse(u.course)) || u.course));
+  if (!list.length) return null;
+  return h("details", { class: "done-section undated", open: true },
+    h("summary", {}, h("span", { class: "arrow" }, "▸"), `Homework found without a due date (${list.length})`),
+    h("p", { class: "muted small undated-note" }, "The sync extension found these in Canvas modules but couldn't find a due date on Gradescope or in the title. Set a date to start tracking one, or hide it."),
+    h("table", { class: "tbl" }, h("tbody", {}, list.map((u, i) => h("tr", { class: "row" + (i % 2 ? " alt" : "") },
+      h("td", { class: "c-title" }, h("span", { class: "t-title" },
+        /^https:\/\//.test(u.link || "") ? h("a", { href: u.link, target: "_blank", rel: "noopener" }, u.title) : u.title),
+        u.module ? h("div", { class: "muted small" }, u.module) : null),
+      h("td", { class: "c-course" }, h("span", { class: "course-tag", style: { "--c": colors[feedCourseFor(shortCourse(u.course))] || scheduleColor(shortCourse(u.course), colors) } },
+        h("span", { class: "sw" }), shortCourse(u.course))),
+      h("td", { class: "c-pct" },
+        h("button", { class: "btn small", onclick: () => openItem(null, { title: u.title, course: feedCourseFor(shortCourse(u.course)) || shortCourse(u.course), resolves: u.uid }) }, "Set due date"), " ",
+        h("button", { class: "btn small", title: "Hide this item", onclick: () => {
+          state.dismissedUndated.add(u.uid); store.set("dismissedUndated", [...state.dismissedUndated]); render();
+        } }, "Hide")))))));
 }
 
 function renderExams(active, finished, colors, now) {
@@ -330,7 +366,7 @@ function renderCalendar(visible, colors, now) {
           const inWindow = it.start && !(it.due >= dayStart && it.due <= dayEnd);
           const tm = it.start ? (inWindow ? "window open" : "window closes") : isAllDay(it.due) ? "due today" : fmtTime(it.due);
           return h("div", {
-              class: "cal-item" + (it.custom ? " added" : "") + (isExam(it) ? " exam" : "") + (it.start ? " window" : "") + (state.done.has(it.uid) ? " done" : ""),
+              class: "cal-item" + (it.custom ? " added" : "") + (isExam(it) ? " exam" : "") + (it.start ? " window" : "") + (isDone(it) ? " done" : ""),
               style: { "--c": colors[it.course] || "#888" },
             },
             h("span", { class: "tm" }, tm),
@@ -376,8 +412,8 @@ function render() {
   const now = Date.now();
   const visible = state.items.filter(it =>
     !state.hidden.has(it.course) && (state.showEvents || it.kind !== "event"));  // "event-lite" = shown, not an exam
-  const active = visible.filter(it => !state.done.has(it.uid));
-  const finished = visible.filter(it => state.done.has(it.uid) && now - it.due < 14 * D);
+  const active = visible.filter(it => !isDone(it));
+  const finished = visible.filter(it => isDone(it) && now - it.due < 14 * D);
 
   $("#s-24").textContent = active.filter(it => it.due >= now && it.due - now < D).length;
   $("#s-week").textContent = active.filter(it => it.due >= now && it.due - now < 7 * D).length;
@@ -397,7 +433,19 @@ function renderStatus(msg) {
   const at = store.get("fetchedAt", null);
   const src = store.get("feedUrl", null) ? "Synced with Canvas"
     : store.get("demo", false) ? "Showing sample data. Open Settings → Disconnect to use your own" : "Loaded from uploaded file";
-  $("#status").textContent = msg || (at ? `${src} · ${new Date(at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : "");
+  const fmt = t => new Date(t).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const el = $("#status");
+  el.replaceChildren(msg || (at ? `${src} · ${fmt(at)}` : ""));
+  const ext = state.extension, sy = state.synced;
+  if (ext.present || sy) {
+    const st = (sy && sy.status) || {};
+    const needs = [st.canvas === "login" && "Canvas", st.gradescope === "login" && "Gradescope"].filter(Boolean);
+    if (el.textContent) el.append(" · ");
+    el.append(
+      ext.syncing ? "Sync extension: checking Canvas modules & Gradescope…"
+        : `Sync extension: ${sy && sy.at ? "updated " + fmt(sy.at) : "connected"}${needs.length ? ` (log in to ${needs.join(" & ")} to update)` : ""}`);
+    if (ext.present && !ext.syncing) el.append(" ", h("button", { class: "link", onclick: () => askExtension("syncNow") }, "Sync now"));
+  }
 }
 
 // ---------- Loading data ----------
@@ -416,8 +464,50 @@ function customToItem(c) {
   return { uid: c.id, title: c.title, course: c.course, due: c.due, link: null, kind: c.kind, custom: true };
 }
 function rebuildItems() {
-  state.items = [...state.feedItems, ...state.custom.map(customToItem), ...scheduleExamItems()];
+  state.items = [...state.feedItems, ...state.custom.map(customToItem), ...scheduleExamItems(), ...syncedItems()];
 }
+
+// Homework from the extension (Gradescope + Canvas modules). Skips anything the Canvas
+// calendar already has for that course around the same time.
+const normTitle = t => String(t || "").toLowerCase().replace(/\.(pdf|docx?)$/, "").replace(/homework/g, "hw").replace(/[^a-z0-9]/g, "");
+function syncedItems() {
+  const sy = state.synced;
+  if (!sy || !Array.isArray(sy.items)) return [];
+  return sy.items.filter(x => x && x.uid && x.title && Number.isFinite(x.due)).flatMap(x => {
+    const short = shortCourse(x.course);
+    const dup = state.feedItems.some(f => shortCourse(f.course) === short && Math.abs(f.due - x.due) < 36 * H &&
+      (normTitle(f.title).includes(normTitle(x.title)) || normTitle(x.title).includes(normTitle(f.title))));
+    if (dup) return [];
+    return [{
+      uid: "ext-" + x.uid, title: x.title, course: feedCourseFor(short) || short, due: x.due,
+      link: /^https:\/\//.test(x.link || "") ? x.link : null,
+      kind: kindOf(x.title, "assignment"), source: x.source, submitted: !!x.submitted,
+    }];
+  });
+}
+
+function undatedHomework() {
+  const sy = state.synced;
+  if (!sy || !Array.isArray(sy.undated)) return [];
+  const customTitles = new Set(state.custom.map(c => normTitle(c.title)));
+  return sy.undated.filter(u => u && u.uid && !state.dismissedUndated.has(u.uid) && !customTitles.has(normTitle(u.title)));
+}
+
+window.addEventListener("message", e => {
+  if (e.source !== window || e.origin !== location.origin) return;
+  const msg = e.data;
+  if (!msg || msg.source !== "tt-extension") return;
+  state.extension.present = true;
+  state.extension.version = msg.version || null;
+  if (msg.type === "syncing") { state.extension.syncing = true; renderStatus(); }
+  if (msg.type === "sync") {
+    state.extension.syncing = false;
+    if (msg.data) { state.synced = msg.data; store.set("synced", msg.data); }
+    rebuildItems(); render();
+  }
+  if (msg.type === "hello") render();
+});
+const askExtension = type => window.postMessage({ source: "tt-page", type }, location.origin);
 
 async function fetchFeed(url) {
   const res = await fetch("/api/feed", {
@@ -562,7 +652,7 @@ $("#set-save").addEventListener("click", () => {
 $("#set-disconnect").addEventListener("click", () => {
   if (!confirm("Forget your feed link, checked-off items and grade weights on this browser?")) return;
   store.clear();
-  Object.assign(state, { items: [], feedItems: [], custom: [], schedule: null, scheduleError: null, done: new Set(), hidden: new Set(), weights: {}, sort: "due", tab: "list", weekOffset: 0, host: CFG.canvasHost, showEvents: false });
+  Object.assign(state, { items: [], feedItems: [], custom: [], schedule: null, scheduleError: null, synced: null, undone: new Set(), dismissedUndated: new Set(), done: new Set(), hidden: new Set(), weights: {}, sort: "due", tab: "list", weekOffset: 0, host: CFG.canvasHost, showEvents: false });
   $("#settings-dlg").close();
   applyHost(); render();
 });
@@ -1026,14 +1116,16 @@ function fillCourseOptions(selected) {
   $("#i-course-new-wrap").hidden = sel.value !== "__new";
 }
 
-function openItem(id = null) {
+let resolvesUndated = null;
+function openItem(id = null, prefill = null) {
   editingId = id;
+  resolvesUndated = prefill && prefill.resolves || null;
   const c = id ? state.custom.find(x => x.id === id) : null;
   $("#item-title").textContent = c ? "Edit Item" : "Add Item";
-  $("#i-title").value = c ? c.title : "";
+  $("#i-title").value = c ? c.title : prefill ? prefill.title : "";
   $("#i-course-new").value = "";
-  fillCourseOptions(c ? c.course : null);
-  $("#i-kind").value = c ? c.kind : "assignment";
+  fillCourseOptions(c ? c.course : prefill ? prefill.course : null);
+  $("#i-kind").value = c ? c.kind : prefill ? kindOf(prefill.title, "assignment") : "assignment";
   const due = c ? c.due : null;
   $("#i-date").value = due ? dateVal(due) : dateVal(Date.now() + D);
   $("#i-time").value = due ? timeVal(due) : "23:59";
@@ -1068,6 +1160,7 @@ $("#i-save").addEventListener("click", e => {
   if (editingId) Object.assign(state.custom.find(x => x.id === editingId), data);
   else state.custom.push({ id: "custom-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), ...data });
   store.set("custom", state.custom);
+  if (resolvesUndated) { state.dismissedUndated.add(resolvesUndated); store.set("dismissedUndated", [...state.dismissedUndated]); resolvesUndated = null; }
   rebuildItems(); render();
 });
 
@@ -1100,6 +1193,7 @@ if (cached) { try { loadIcs(cached, { save: false }); } catch { render(); } }
 else render();
 refresh({ quiet: true });
 refreshSchedule();
+askExtension("ready");
 
 setInterval(render, 60e3);
 setInterval(() => refresh({ quiet: true }), 30 * 60e3);

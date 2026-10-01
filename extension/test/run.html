@@ -1,0 +1,17 @@
+<!doctype html><meta charset="utf-8"><title>Gradescope parser test</title>
+<script src="../shared.js"></script><script src="../gradescope-parse.js"></script>
+<pre id="out">running…</pre>
+<script>
+(async () => {
+  const doc = async f => new DOMParser().parseFromString(await (await fetch(f)).text(), "text/html");
+  const now = new Date(2026, 9, 1);
+  const res = {
+    dashboard: TTGradescope.parseDashboard(await doc("gs-dashboard.html"), now),
+    course: TTGradescope.parseCourse(await doc("gs-course.html"), "123456", "MATH 20C", now),
+    login: TTGradescope.parseDashboard(await doc("gs-login.html"), now),
+  };
+  res.course.assignments.forEach(a => a.dueISO = a.due && new Date(a.due).toISOString());
+  window.RESULT = res;
+  document.getElementById("out").textContent = JSON.stringify(res, null, 1);
+})();
+</script>
