@@ -65,3 +65,64 @@ t("merge: Gradescope date wins, no duplicates, undated kept", () => {
 });
 
 console.log(`shared.js: ${n} test groups passed`);
+
+// ---------- estimates ----------
+const at = (y, m, d, h = 23, mi = 59) => new Date(y, m - 1, d, h, mi).getTime();
+const day = ms => new Date(ms).toDateString() + " " + new Date(ms).toTimeString().slice(0, 5);
+const hw = (n, posted, course = "MATH 20C") => ({ uid: `cm-${course}-${n}`, title: `HW${n}`, course, due: null, posted, hw: S.homeworkKey(`HW${n}`) });
+
+t("estimate: learns the course's rhythm", () => {
+  const known = [
+    { course: "MATH 20C", title: "Homework 1", posted: at(2026, 9, 30, 9, 0), due: at(2026, 10, 7, 22, 0) },
+    { course: "MATH 20C", title: "Homework 2", posted: at(2026, 10, 7, 9, 0), due: at(2026, 10, 14, 22, 0) },
+  ];
+  const { items } = S.mergeHomework([hw(3, at(2026, 10, 14, 9, 0))], [], known);
+  assert.equal(items.length, 1);
+  assert.equal(items[0].estimated, true);
+  assert.equal(day(items[0].due), day(at(2026, 10, 21, 22, 0)));   // 7 days later, at the course's usual 10pm
+  assert.match(items[0].basis, /usually due 7 days later/);
+});
+
+t("estimate: default one week at 11:59pm", () => {
+  const { items } = S.mergeHomework([hw(1, at(2026, 10, 1, 12, 0), "PHIL 27")], [], []);
+  assert.equal(day(items[0].due), day(at(2026, 10, 8)));
+});
+
+t("estimate: snaps to the usual weekday", () => {
+  const known = [1, 2, 3].map(i => ({ course: "CSE 20", title: `Homework ${i}`, due: at(2026, 10, 2 + 7 * (i - 1)) })); // Fridays
+  const { items } = S.mergeHomework([hw(4, at(2026, 10, 19, 10, 0), "CSE 20")], [], known);           // posted Monday
+  assert.equal(new Date(items[0].due).getDay(), 5);
+});
+
+t("estimate: all uploaded at once, anchored on a Gradescope date", () => {
+  const up = at(2026, 9, 25, 10, 0);
+  const canvas = [1, 2, 3, 4].map(n => hw(n, up + n * 60e3));
+  const gs = [{ id: "2", title: "Homework 2", course: "MATH 20C", due: at(2026, 10, 9), hw: S.homeworkKey("Homework 2") }];
+  const { items } = S.mergeHomework(canvas, gs, []);
+  const byTitle = Object.fromEntries(items.map(i => [i.title, i]));
+  assert.equal(byTitle["Homework 2"].estimated, undefined);             // real date from Gradescope
+  assert.equal(day(byTitle.HW3.due), day(at(2026, 10, 16)));
+  assert.equal(day(byTitle.HW4.due), day(at(2026, 10, 23)));
+  assert.equal(day(byTitle.HW1.due), day(at(2026, 10, 2)));
+});
+
+t("estimate: all uploaded at once, nothing to anchor on", () => {
+  const up = at(2026, 9, 25, 10, 0);
+  const { items } = S.mergeHomework([1, 2, 3].map(n => hw(n, up)), [], []);
+  assert.deepEqual(items.map(i => day(i.due)), [at(2026, 10, 2), at(2026, 10, 9), at(2026, 10, 16)].map(day));
+  assert.match(items[0].basis, /posted at once/);
+});
+
+t("skips module PDFs that are already dated Canvas assignments", () => {
+  const known = [{ course: "MATH 20C", title: "Homework 5", due: at(2026, 10, 30), posted: at(2026, 10, 23) }];
+  const { items, undated } = S.mergeHomework([hw(5, at(2026, 10, 23))], [], known);
+  assert.equal(items.length + undated.length, 0);
+});
+
+t("exams don't skew the rhythm", () => {
+  const known = [{ course: "PSYC 3", title: "Midterm", posted: at(2026, 9, 25), due: at(2026, 10, 28) }];
+  const { items } = S.mergeHomework([hw(1, at(2026, 10, 1, 12, 0), "PSYC 3")], [], known);
+  assert.equal(day(items[0].due), day(at(2026, 10, 8)));
+});
+
+console.log(`estimates: all passed (${n} groups total)`);

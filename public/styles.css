@@ -182,6 +182,17 @@ details.done-section[open] summary .arrow { transform: rotate(90deg); }
 .undated-note { margin: 0 12px 8px; }
 .undated .c-pct { width: auto; white-space: nowrap; }
 .status .link { font-size: 12px; }
+.token-box { border: 1px solid var(--border); border-radius: 4px; padding: 10px 12px; margin: 14px 0 6px; background: var(--zebra); }
+.token-head { font-weight: 700; color: var(--navy); font-size: 14px; }
+.token-box p { margin: 6px 0; }
+.token-steps { padding-left: 18px; margin: 6px 0 8px; line-height: 1.6; }
+.token-row { display: flex; gap: 8px; }
+.token-row input { flex: 1; font-family: "Roboto Mono", monospace; font-size: 12px; }
+#token-msg { min-height: 18px; margin-top: 6px; }
+#token-msg.ok { color: var(--green); } #token-msg.err { color: var(--red); }
+.badge.est { background: #fff3df; color: var(--orange); border: 1px dashed #e0b066; }
+.pill.est { border: 1px dashed currentColor; }
+.est-fix { font-size: 11px; margin-left: 6px; }
 .status { color: var(--faint); font-size: 12px; padding: 8px 12px; border-top: 1px solid var(--border-soft); background: #fbfcfd; }
 
 /* ---------- Calendar ---------- */

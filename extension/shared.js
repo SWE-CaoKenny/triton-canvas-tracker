@@ -95,35 +95,102 @@
     return new Date(y, mo, +m[2], h, +m[5]).getTime();
   }
 
-  // Merge Canvas module homework (often no date) with Gradescope assignments (dated).
-  // Returns { items: dated items for the tracker, undated: homework with no date found }.
-  function mergeHomework(canvasHw, gsAssignments) {
-    const items = [];
-    const usedGs = new Set();
-    const byCourse = new Map();
-    for (const g of gsAssignments) {
-      const list = byCourse.get(g.course) || byCourse.set(g.course, []).get(g.course);
-      list.push(g);
+  // ---------- Due-date estimates from posting dates ----------
+  const DAY = 864e5;
+  const median = xs => { const v = [...xs].sort((a, b) => a - b); return v.length ? v[Math.floor((v.length - 1) / 2)] : null; };
+  const mode = xs => { const m = new Map(); let best = null, n = 0; for (const x of xs) { const c = (m.get(x) || 0) + 1; m.set(x, c); if (c > n) { n = c; best = x; } } return { value: best, count: n }; };
+  const atTime = (ms, hm) => { const d = new Date(ms); const [h, mi] = hm.split(":").map(Number); d.setHours(h, mi, 0, 0); return d.getTime(); };
+  const hmOf = ms => { const d = new Date(ms); return `${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`; };
+  const fmtDay = ms => new Date(ms).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+
+  // The course's homework rhythm, learned from homework that has both a posting and due date.
+  function courseRhythm(refs) {
+    const pairs = refs.filter(r => r.due && r.posted && r.due > r.posted && r.due - r.posted < 28 * DAY);
+    const dues = refs.filter(r => r.due).map(r => r.due);
+    const midnight = ms => { const d = new Date(ms); d.setHours(0, 0, 0, 0); return d.getTime(); };
+    const offset = median(pairs.map(r => Math.round((midnight(r.due) - midnight(r.posted)) / DAY)));  // calendar days
+    const time = mode(dues.map(hmOf));
+    const wd = mode(dues.map(t => new Date(t).getDay()));
+    return {
+      offsetDays: offset != null ? Math.min(14, Math.max(2, offset)) : 7,
+      learned: offset != null,
+      time: time.count >= 2 ? time.value : "23:59",
+      weekday: dues.length >= 2 && wd.count / dues.length >= 0.75 ? wd.value : null,
+      numbered: refs.filter(r => r.due && r.hw && HOMEWORK_FAMILY.has(r.hw.kind)),
+    };
+  }
+
+  // Estimate due dates for undated homework in one course. Returns [{ ...item, due, estimated, basis }].
+  function estimateCourse(undated, refs) {
+    if (!undated.length) return [];
+    const rh = courseRhythm(refs);
+    const snap = ms => {
+      if (rh.weekday == null) return ms;
+      for (const delta of [0, 1, -1, 2, -2, 3, -3]) {
+        const t = ms + delta * DAY;
+        if (new Date(t).getDay() === rh.weekday) return t;
+      }
+      return ms;
+    };
+    const posted = undated.filter(u => u.posted).map(u => u.posted);
+    // Many files posted within 2 days of each other = uploaded all at once; posting dates are useless.
+    const bunched = posted.length >= 3 && Math.max(...posted) - Math.min(...posted) < 2 * DAY;
+    const out = [];
+    for (const u of undated) {
+      const n = u.hw && HOMEWORK_FAMILY.has(u.hw.kind) ? u.hw.num : null;
+      let due = null, basis = "";
+      // 1. Same-numbered sequence anchored on a homework with a real due date (HW2 due Oct 9 -> HW3 ~Oct 16).
+      const anchor = n != null && rh.numbered.length
+        ? rh.numbered.reduce((best, r) => (!best || Math.abs(r.hw.num - n) < Math.abs(best.hw.num - n) ? r : best), null)
+        : null;
+      if (anchor && (bunched || !u.posted)) {
+        due = anchor.due + (n - anchor.hw.num) * 7 * DAY;
+        basis = `${anchor.title} is due ${fmtDay(anchor.due)}; assuming one per week`;
+      } else if (u.posted && !bunched) {
+        due = snap(atTime(u.posted + rh.offsetDays * DAY, rh.time));
+        basis = `posted ${fmtDay(u.posted)}; ${rh.learned ? `this course's homework is usually due ${rh.offsetDays} days later` : "assuming due one week later"}`;
+      } else if (bunched && n != null) {
+        // 2. All uploaded at once, nothing to anchor on: space by number from the first homework.
+        const first = Math.min(...posted);
+        const nums = undated.filter(x => x.hw && HOMEWORK_FAMILY.has(x.hw.kind)).map(x => x.hw.num);
+        const minN = Math.min(...nums);
+        due = snap(atTime(first + rh.offsetDays * DAY + (n - minN) * 7 * DAY, rh.time));
+        basis = "all homework was posted at once; assuming one due each week";
+      }
+      if (due) out.push({ ...u, due, estimated: true, basis });
     }
-    const findGs = (c) => {
-      const list = byCourse.get(c.course) || [];
-      const k = homeworkKey(c.title);
-      if (!k) return null;
+    return out;
+  }
+
+  // Merge Canvas module homework (often no date) with Gradescope assignments (dated) and
+  // Canvas assignments that already have due dates (`known`).
+  // Returns { items: dated or estimated items for the tracker, undated: still no date }.
+  function mergeHomework(canvasHw, gsAssignments, known = []) {
+    const items = [];
+    const byCourse = (list) => {
+      const m = new Map();
+      for (const x of list) (m.get(x.course) || m.set(x.course, []).get(x.course)).push(x);
+      return m;
+    };
+    const gsBy = byCourse(gsAssignments.map(g => ({ ...g, hw: g.hw || homeworkKey(g.title) })));
+    const knownBy = byCourse(known.filter(k => k.due).map(k => ({ ...k, hw: k.hw || homeworkKey(k.title) })));
+    const match = (list, c) => {
+      const k = c.hw || homeworkKey(c.title);
+      if (!k || !list) return null;
       let hit = list.find(g => g.hw && g.hw.key === k.key);
       if (!hit && HOMEWORK_FAMILY.has(k.kind)) {
-        // Same number, both "homework family" (e.g. "PS 3.pdf" vs "Homework 3").
         const cands = list.filter(g => g.hw && HOMEWORK_FAMILY.has(g.hw.kind) && g.hw.num === k.num);
         if (cands.length === 1) hit = cands[0];
       }
-      return hit || null;
+      return hit;
     };
 
-    const undated = [];
+    const pending = [];
     for (const c of canvasHw) {
-      const g = findGs(c);
-      if (g) { usedGs.add(g.id); continue; }   // Gradescope's copy wins (it has the date)
+      if (match(gsBy.get(c.course), c)) continue;      // Gradescope's copy has the date
+      if (match(knownBy.get(c.course), c)) continue;   // already a dated Canvas assignment (in the feed)
       if (c.due) items.push({ ...c, source: "canvas-module" });
-      else undated.push(c);
+      else pending.push(c);
     }
     for (const g of gsAssignments) {
       if (!g.due) continue;
@@ -132,8 +199,21 @@
         submitted: !!g.submitted, source: "gradescope",
       });
     }
+
+    // Estimate the rest, course by course.
+    const undated = [];
+    for (const [course, list] of byCourse(pending)) {
+      const refs = [
+        ...(knownBy.get(course) || []).map(k => ({ title: k.title, due: k.due, posted: k.posted, hw: k.hw })),
+        ...(gsBy.get(course) || []).filter(g => g.due).map(g => ({ title: g.title, due: g.due, posted: g.released || null, hw: g.hw })),
+      ].filter(r => r.hw);   // learn only from numbered homework-like work, not exams
+      const est = estimateCourse(list, refs);
+      const got = new Set(est.map(e => e.uid));
+      for (const e of est) items.push({ ...e, source: "canvas-module" });
+      for (const u of list) if (!got.has(u.uid)) undated.push(u);
+    }
     return { items, undated };
   }
 
-  root.TTShared = { isHomeworkTitle, homeworkKey, cleanTitle, shortCourse, dateFromText, parseGsDatetime, parseGsText, mergeHomework };
+  root.TTShared = { isHomeworkTitle, homeworkKey, cleanTitle, shortCourse, dateFromText, parseGsDatetime, parseGsText, mergeHomework, estimateCourse, courseRhythm };
 })(typeof self !== "undefined" ? self : globalThis);

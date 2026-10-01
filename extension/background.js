@@ -1,7 +1,7 @@
 // Triton Tracker Sync: background service worker.
 // Uses your existing Canvas and Gradescope logins (cookies) to find homework the Canvas
 // calendar misses. Never sees or stores passwords; never clicks or submits anything.
-importScripts("shared.js");
+importScripts("shared.js", "canvas-scan.js");
 const S = self.TTShared;
 
 const CANVAS = "https://canvas.ucsd.edu";
@@ -25,59 +25,12 @@ async function canvasJson(url) {
   return { data: JSON.parse(body), next: next ? next[1] : null };
 }
 
-async function canvasAll(url, maxPages = 10) {
-  const out = [];
-  for (let i = 0; url && i < maxPages; i++) {
-    const { data, next } = await canvasJson(url);
-    out.push(...data);
-    url = next;
-  }
-  return out;
-}
-
-const SKIP_TYPES = new Set(["Discussion", "Quiz"]);   // already in the calendar feed
-
 async function syncCanvas() {
-  const now = Date.now();
-  const courses = (await canvasAll(`${CANVAS}/api/v1/users/self/courses?enrollment_state=active&include[]=term&per_page=100`))
-    .filter(c => c && !c.access_restricted_by_date && c.name)
-    .filter(c => !c.term || !c.term.end_at || Date.parse(c.term.end_at) > now - 14 * 864e5);
-
-  const found = [];
-  for (const c of courses) {
-    const course = S.shortCourse(c.course_code || c.name);
-    let modules;
-    try {
-      modules = await canvasAll(`${CANVAS}/api/v1/courses/${c.id}/modules?include[]=items&include[]=content_details&per_page=50`, 5);
-    } catch (e) {
-      if (e instanceof LoginNeeded) throw e;
-      continue;                      // modules tab hidden in this course
-    }
-    const seenKeys = new Set();
-    for (const mod of modules) {
-      let items = mod.items;
-      if (!items && mod.items_url) {
-        try { items = await canvasAll(`${mod.items_url}${mod.items_url.includes("?") ? "&" : "?"}include[]=content_details&per_page=100`, 3); }
-        catch { items = []; }
-      }
-      for (const it of items || []) {
-        if (SKIP_TYPES.has(it.type)) continue;
-        if (it.type === "Assignment" && it.content_details && it.content_details.due_at) continue; // in feed
-        const title = S.cleanTitle(it.title);
-        if (!S.isHomeworkTitle(title)) continue;
-        const k = S.homeworkKey(title);
-        if (k) { if (seenKeys.has(k.key)) continue; seenKeys.add(k.key); }
-        found.push({
-          uid: `cm-${c.id}-${it.id}`,
-          title, course,
-          due: S.dateFromText(`${it.title} ${mod.name}`) || null,
-          link: it.html_url || `${CANVAS}/courses/${c.id}/modules`,
-          module: mod.name,
-        });
-      }
-    }
-  }
-  return { hw: found, courseCount: courses.length };
+  return self.TTCanvasScan.scan({
+    base: CANVAS,
+    getJson: canvasJson,
+    isLoginError: e => e instanceof LoginNeeded,
+  });
 }
 
 // ---------- Gradescope (HTML pages, parsed in an offscreen document) ----------
@@ -124,9 +77,9 @@ async function syncGradescope() {
 // ---------- Sync + publish ----------
 
 async function publish() {
-  const { canvasHw = [], gsCourses = {}, status = {} } = await get(["canvasHw", "gsCourses", "status"]);
+  const { canvasHw = [], canvasKnown = [], gsCourses = {}, status = {} } = await get(["canvasHw", "canvasKnown", "gsCourses", "status"]);
   const gsAll = Object.values(gsCourses).flatMap(c => c.assignments || []);
-  const { items, undated } = S.mergeHomework(canvasHw, gsAll);
+  const { items, undated } = S.mergeHomework(canvasHw, gsAll, canvasKnown);
   await set({ syncData: { items, undated, status, at: Date.now(), version: chrome.runtime.getManifest().version } });
 }
 
@@ -139,7 +92,7 @@ async function syncAll({ force = false } = {}) {
     const status = { lastSync: Date.now() };
     try {
       const r = await syncCanvas();
-      await set({ canvasHw: r.hw });
+      await set({ canvasHw: r.hw, canvasKnown: r.known });
       Object.assign(status, { canvas: "ok", canvasCourses: r.courseCount, canvasFound: r.hw.length });
     } catch (e) {
       status.canvas = e instanceof LoginNeeded ? "login" : "error";

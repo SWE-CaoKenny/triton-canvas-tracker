@@ -202,6 +202,22 @@
         <input id="set-events" type="checkbox">
         Show all calendar events (lectures, office hours), not just assignments and exams
       </label>
+      <div class="token-box" id="token-box">
+        <div class="token-head">Find homework posted only in Canvas Modules</div>
+        <p class="muted small">Some classes post homework as PDFs in Modules (like <code>HW1.pdf</code>) instead of on the calendar. With a Canvas access token, Triton Tracker finds them and estimates due dates from when they were posted. The <b>Triton Tracker Sync</b> extension does this too, plus exact Gradescope dates.</p>
+        <ol class="small token-steps">
+          <li>In Canvas, open <a id="token-link" href="https://canvas.ucsd.edu/profile/settings" target="_blank" rel="noopener">Account → Settings</a>.</li>
+          <li>Under <b>Approved Integrations</b>, click <b>+ New Access Token</b>. Purpose: "Triton Tracker"; pick an expiry date (e.g. end of quarter).</li>
+          <li>Copy the token and paste it here.</li>
+        </ol>
+        <div class="token-row">
+          <input id="set-token" type="password" placeholder="Paste your Canvas access token" autocomplete="off" spellcheck="false">
+          <button type="button" class="btn primary" id="token-save">Save &amp; scan</button>
+        </div>
+        <div id="token-msg" class="small" role="status"></div>
+        <p class="fine">⚠️ A token can do anything you can do in Canvas, so treat it like a password. It's saved only in this browser and sent to the Triton Tracker server just to read Canvas. It's never stored or logged there. You can delete it any time in Canvas → Settings.</p>
+        <button type="button" class="btn small danger" id="token-remove" hidden>Remove token</button>
+      </div>
     </div>
     <div class="dlg-actions split">
       <button type="button" class="btn danger" id="set-disconnect">Disconnect &amp; forget my data</button>
@@ -211,6 +227,7 @@
 </dialog>
 
 <script src="config.js"></script>
+<script src="lib/shared.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

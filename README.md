@@ -16,6 +16,7 @@ Built for UC San Diego students, but it works with **any school that uses Canvas
 - **Grade impact.** Enter your syllabus's grading breakdown (for example "Midterms 40%, Final 45%, Homework 15%") and every card shows its share of your final grade, like "20% of grade". You can sort by it.
 - **My Schedule (UCSD):** paste your [Class Planner](https://classplanner.apps.ucsd.edu/) share link to see your weekly classes with times, rooms and professors, a campus map, walking times between back-to-back classes (with tight transfers and time conflicts flagged), and your midterms and finals, which also show up as countdowns.
 - **Sync extension (Chrome/Edge):** finds homework the Canvas calendar misses, like `HW1.pdf` in Modules that's turned in on Gradescope, and pulls due dates from Gradescope automatically. Submitted work is checked off for you. See [extension/README.md](extension/README.md).
+- **Homework posted only in Modules, no extension needed:** paste a Canvas access token in **Settings** and the site scans your modules for `HW1.pdf`-style homework. When there's no due date anywhere, it **estimates** one from when the homework was posted and the course's usual rhythm (for example "due 7 days after posting at 11:59pm"). Estimates are labeled, and one click sets the real date. The token is kept only in your browser and never stored on the server.
 - **Add anything Canvas missed**, like an in-class midterm or a paper handout, with **+ Add Item**. Added items show in every tab, count toward grade weights, and can be edited or deleted.
 - **Check things off** as you finish them.
 - **Filter by course.**
@@ -75,6 +76,8 @@ Browsers aren't allowed to read Canvas calendar feeds directly from another webs
 - receives the link in the request body, never the URL, so it doesn't show up in access logs
 - doesn't store or log feed links or calendar data
 - rate-limits each IP address
+
+`POST /api/canvas-scan` takes a Canvas host and access token, makes read-only Canvas API calls on that host only (capped at 150 calls), and returns homework candidates with posting dates. The token is used for that request alone: never stored, cached or logged. Due-date estimates are computed in your browser so they use your time zone (`extension/shared.js`, served at `/lib/shared.js`).
 
 A second endpoint, `POST /api/schedule`, loads a UCSD Class Planner share page. It only accepts `https://classplanner.apps.ucsd.edu/view/…` links, reads the schedule data embedded in the page (see `planner.js`), and caches each schedule for 15 minutes to go easy on UCSD's servers.
 

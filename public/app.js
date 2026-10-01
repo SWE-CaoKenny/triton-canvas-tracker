@@ -26,6 +26,8 @@ const state = {
   feedItems: [],
   custom: store.get("custom", []),  // items the user added by hand
   synced: store.get("synced", null),  // homework from the Triton Tracker Sync extension
+  tokenSync: store.get("tokenSync", null),  // homework from the website's Canvas-token scan
+  scanning: false,
   undone: new Set(store.get("undone", [])),  // submitted-on-Gradescope items the user un-checked
   dismissedUndated: new Set(store.get("dismissedUndated", [])),
   extension: { present: false, syncing: false, version: null },
@@ -241,6 +243,7 @@ function titleEl(it) {
 function row(it, colors, now, alt) {
   const share = gradeShare(it);
   const left = timeLeft(it, now);
+  if (it.estimated) left.text = "~" + left.text;
   return h("tr", { class: "row" + (alt ? " alt" : "") + (isExam(it) ? " exam" : "") + (isDone(it) ? " done" : "") },
     h("td", { class: "c-check" }, checkBtn(it)),
     h("td", { class: "c-title" },
@@ -249,12 +252,15 @@ function row(it, colors, now, alt) {
       it.custom && h("span", { class: "badge added", title: "You added this item" }, "Added"),
       it.planner && h("span", { class: "badge added", title: "From your Class Planner schedule" }, "Planner"),
       it.source === "gradescope" && h("span", { class: "badge added", title: "Found on Gradescope by the sync extension" }, "Gradescope"),
-      it.source === "canvas-module" && h("span", { class: "badge added", title: "Found in Canvas modules by the sync extension" }, "Module")),
+      it.source === "canvas-module" && !it.estimated && h("span", { class: "badge added", title: "Found in Canvas modules" }, "Module"),
+      it.estimated && h("span", { class: "badge est", title: `Estimated due date: ${it.basis}` }, "Estimated"),
+      it.estimated && h("button", { class: "link est-fix", title: "Set the real due date", onclick: () =>
+        openItem(null, { title: it.title, course: it.course, due: it.due, resolves: it.rawUid }) }, "Set date")),
     h("td", { class: "c-course" },
       h("span", { class: "course-tag", style: { "--c": colors[it.course] || "#888" }, title: it.course },
         h("span", { class: "sw" }), shortCourse(it.course))),
     h("td", { class: "c-type" }, TYPE_LABEL[it.kind] || "Item"),
-    h("td", { class: "c-left" }, h("span", { class: "pill " + left.cls }, left.text)),
+    h("td", { class: "c-left" }, h("span", { class: "pill " + left.cls + (it.estimated ? " est" : ""), title: it.estimated ? `Estimated: ${it.basis}` : null }, left.text)),
     h("td", { class: "c-pct" }, share != null
       ? h("span", { class: share >= 10 ? "pct-hi" : "", title: "Share of your final grade" }, fmtPct(share))
       : h("span", { class: "pct-none" }, "—")),
@@ -314,7 +320,7 @@ function undatedSection(colors) {
   if (!list.length) return null;
   return h("details", { class: "done-section undated", open: true },
     h("summary", {}, h("span", { class: "arrow" }, "▸"), `Homework found without a due date (${list.length})`),
-    h("p", { class: "muted small undated-note" }, "The sync extension found these in Canvas modules but couldn't find a due date on Gradescope or in the title. Set a date to start tracking one, or hide it."),
+    h("p", { class: "muted small undated-note" }, "Found in Canvas modules, but there was no due date to read or estimate. Set a date to start tracking one, or hide it."),
     h("table", { class: "tbl" }, h("tbody", {}, list.map((u, i) => h("tr", { class: "row" + (i % 2 ? " alt" : "") },
       h("td", { class: "c-title" }, h("span", { class: "t-title" },
         /^https:\/\//.test(u.link || "") ? h("a", { href: u.link, target: "_blank", rel: "noopener" }, u.title) : u.title),
@@ -364,7 +370,8 @@ function renderCalendar(visible, colors, now) {
       h("div", { class: "cal-body" },
         onDay.length ? onDay.map(it => {
           const inWindow = it.start && !(it.due >= dayStart && it.due <= dayEnd);
-          const tm = it.start ? (inWindow ? "window open" : "window closes") : isAllDay(it.due) ? "due today" : fmtTime(it.due);
+          let tm = it.start ? (inWindow ? "window open" : "window closes") : isAllDay(it.due) ? "due today" : fmtTime(it.due);
+          if (it.estimated) tm = "~" + tm + " (est.)";
           return h("div", {
               class: "cal-item" + (it.custom ? " added" : "") + (isExam(it) ? " exam" : "") + (it.start ? " window" : "") + (isDone(it) ? " done" : ""),
               style: { "--c": colors[it.course] || "#888" },
@@ -445,6 +452,13 @@ function renderStatus(msg) {
       ext.syncing ? "Sync extension: checking Canvas modules & Gradescope…"
         : `Sync extension: ${sy && sy.at ? "updated " + fmt(sy.at) : "connected"}${needs.length ? ` (log in to ${needs.join(" & ")} to update)` : ""}`);
     if (ext.present && !ext.syncing) el.append(" ", h("button", { class: "link", onclick: () => askExtension("syncNow") }, "Sync now"));
+  } else if (state.tokenSync) {
+    if (el.textContent) el.append(" · ");
+    el.append(state.scanning ? "Module scan: checking Canvas…" : `Module scan: updated ${fmt(state.tokenSync.at)}`, " ",
+      h("button", { class: "link", onclick: () => scanWithToken({ quiet: false }) }, "Scan now"));
+  } else {
+    if (el.textContent) el.append(" · ");
+    el.append(h("button", { class: "link", onclick: openSettings }, "Homework only posted as PDFs in Modules? Find it"));
   }
 }
 
@@ -470,10 +484,13 @@ function rebuildItems() {
 // Homework from the extension (Gradescope + Canvas modules). Skips anything the Canvas
 // calendar already has for that course around the same time.
 const normTitle = t => String(t || "").toLowerCase().replace(/\.(pdf|docx?)$/, "").replace(/homework/g, "hw").replace(/[^a-z0-9]/g, "");
+// The extension's data wins (it also has Gradescope); otherwise use the token scan.
+const syncSource = () => (state.synced && state.extension.present ? state.synced : state.tokenSync || state.synced);
+
 function syncedItems() {
-  const sy = state.synced;
+  const sy = syncSource();
   if (!sy || !Array.isArray(sy.items)) return [];
-  return sy.items.filter(x => x && x.uid && x.title && Number.isFinite(x.due)).flatMap(x => {
+  return sy.items.filter(x => x && x.uid && x.title && Number.isFinite(x.due) && !state.dismissedUndated.has(x.uid)).flatMap(x => {
     const short = shortCourse(x.course);
     const dup = state.feedItems.some(f => shortCourse(f.course) === short && Math.abs(f.due - x.due) < 36 * H &&
       (normTitle(f.title).includes(normTitle(x.title)) || normTitle(x.title).includes(normTitle(f.title))));
@@ -482,12 +499,13 @@ function syncedItems() {
       uid: "ext-" + x.uid, title: x.title, course: feedCourseFor(short) || short, due: x.due,
       link: /^https:\/\//.test(x.link || "") ? x.link : null,
       kind: kindOf(x.title, "assignment"), source: x.source, submitted: !!x.submitted,
+      estimated: !!x.estimated, basis: x.basis || "", rawUid: x.uid,
     }];
   });
 }
 
 function undatedHomework() {
-  const sy = state.synced;
+  const sy = syncSource();
   if (!sy || !Array.isArray(sy.undated)) return [];
   const customTitles = new Set(state.custom.map(c => normTitle(c.title)));
   return sy.undated.filter(u => u && u.uid && !state.dismissedUndated.has(u.uid) && !customTitles.has(normTitle(u.title)));
@@ -639,6 +657,12 @@ $("#btn-weights").addEventListener("click", openWeights);
 
 function openSettings() {
   $("#set-host").value = state.host || CFG.canvasHost;
+  $("#token-link").href = `https://${state.host || CFG.canvasHost}/profile/settings`;
+  const has = !!store.get("canvasToken", null);
+  $("#set-token").value = "";
+  $("#set-token").placeholder = has ? "Token saved (paste a new one to replace it)" : "Paste your Canvas access token";
+  $("#token-remove").hidden = !has;
+  tokenMsg(state.tokenSync ? `Last scan: ${(state.tokenSync.items || []).length} found${state.tokenSync.at ? " · " + new Date(state.tokenSync.at).toLocaleString() : ""}` : "", "");
   $("#set-events").checked = state.showEvents;
   $("#set-disconnect").hidden = $("#tracker").hidden;
   $("#settings-dlg").showModal();
@@ -649,10 +673,55 @@ $("#set-save").addEventListener("click", () => {
   state.showEvents = $("#set-events").checked; store.set("showEvents", state.showEvents);
   applyHost(); render();
 });
+// ---------- Canvas-token module scan (website-only alternative to the extension) ----------
+
+function tokenMsg(text, cls) { const el = $("#token-msg"); el.textContent = text; el.className = "small " + (cls || ""); }
+
+async function scanWithToken({ quiet = true } = {}) {
+  const token = store.get("canvasToken", null);
+  if (!token || state.scanning || !window.TTShared) return;
+  state.scanning = true;
+  if (!quiet) tokenMsg("Scanning your Canvas modules… (this can take up to a minute)", "");
+  try {
+    const res = await fetch("/api/canvas-scan", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ host: state.host || CFG.canvasHost, token }),
+    });
+    const body = await res.text();
+    if (!res.ok) throw Object.assign(new Error(body || "Scan failed."), { status: res.status });
+    const r = JSON.parse(body);
+    const { items, undated } = TTShared.mergeHomework(r.hw || [], [], r.known || []);   // estimates use your time zone
+    state.tokenSync = { items, undated, at: Date.now(), status: { canvas: "ok" }, source: "token" };
+    store.set("tokenSync", state.tokenSync);
+    const est = items.filter(i => i.estimated).length;
+    tokenMsg(`Found ${items.length + undated.length} homework item${items.length + undated.length === 1 ? "" : "s"} in ${r.courseCount} course${r.courseCount === 1 ? "" : "s"}${est ? ` (${est} with estimated due dates)` : ""}.`, "ok");
+    rebuildItems(); render();
+  } catch (e) {
+    if (e.status === 401) { store.set("canvasToken", null); $("#token-remove").hidden = true; }
+    tokenMsg(e.message, "err");
+  } finally { state.scanning = false; }
+}
+
+$("#token-save").addEventListener("click", () => {
+  const t = $("#set-token").value.trim();
+  if (!t) return tokenMsg("Paste a token first.", "err");
+  const host = $("#set-host").value.trim().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+  if (host) { state.host = host; store.set("host", host); }
+  store.set("canvasToken", t);
+  $("#set-token").value = ""; $("#token-remove").hidden = false;
+  scanWithToken({ quiet: false });
+});
+$("#token-remove").addEventListener("click", () => {
+  store.set("canvasToken", null); store.set("tokenSync", null); state.tokenSync = null;
+  $("#token-remove").hidden = true;
+  tokenMsg("Token removed from this browser. To fully revoke it, delete it in Canvas → Account → Settings.", "ok");
+  rebuildItems(); render();
+});
+
 $("#set-disconnect").addEventListener("click", () => {
   if (!confirm("Forget your feed link, checked-off items and grade weights on this browser?")) return;
   store.clear();
-  Object.assign(state, { items: [], feedItems: [], custom: [], schedule: null, scheduleError: null, synced: null, undone: new Set(), dismissedUndated: new Set(), done: new Set(), hidden: new Set(), weights: {}, sort: "due", tab: "list", weekOffset: 0, host: CFG.canvasHost, showEvents: false });
+  Object.assign(state, { items: [], feedItems: [], custom: [], schedule: null, scheduleError: null, synced: null, tokenSync: null, undone: new Set(), dismissedUndated: new Set(), done: new Set(), hidden: new Set(), weights: {}, sort: "due", tab: "list", weekOffset: 0, host: CFG.canvasHost, showEvents: false });
   $("#settings-dlg").close();
   applyHost(); render();
 });
@@ -1126,7 +1195,7 @@ function openItem(id = null, prefill = null) {
   $("#i-course-new").value = "";
   fillCourseOptions(c ? c.course : prefill ? prefill.course : null);
   $("#i-kind").value = c ? c.kind : prefill ? kindOf(prefill.title, "assignment") : "assignment";
-  const due = c ? c.due : null;
+  const due = c ? c.due : prefill && prefill.due ? prefill.due : null;
   $("#i-date").value = due ? dateVal(due) : dateVal(Date.now() + D);
   $("#i-time").value = due ? timeVal(due) : "23:59";
   $("#i-delete").hidden = !c;
@@ -1194,6 +1263,8 @@ else render();
 refresh({ quiet: true });
 refreshSchedule();
 askExtension("ready");
+if (!state.tokenSync || Date.now() - (state.tokenSync.at || 0) > 60 * 60e3) setTimeout(() => scanWithToken(), 1500);
+setInterval(() => scanWithToken(), 60 * 60e3);
 
 setInterval(render, 60e3);
 setInterval(() => refresh({ quiet: true }), 30 * 60e3);

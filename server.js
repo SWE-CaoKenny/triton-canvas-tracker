@@ -10,6 +10,9 @@ const net = require("node:net");
 const fs = require("node:fs");
 const path = require("node:path");
 const planner = require("./planner");
+require("./extension/shared.js");        // homework keywords, matching, estimates
+require("./extension/canvas-scan.js");   // Canvas module scanner (shared with the extension)
+const { TTCanvasScan } = globalThis;
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -176,6 +179,73 @@ async function handleFeed(req, res) {
   }
 }
 
+// ---------- Canvas module scan with a personal access token ----------
+// The token is used only for this one request: never stored, cached or logged.
+
+const CANVAS_HOST = /^(?=.{4,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i;
+const CANVAS_TOKEN = /^[A-Za-z0-9~._-]{20,256}$/;
+const SCAN_MAX_CALLS = 150;
+const SCAN_TIMEOUT_MS = 50_000;
+
+class TokenRejected extends Error {}
+
+function canvasTokenFetcher(base, token) {
+  let calls = 0;
+  const origin = new URL(base).origin;
+  return function getJson(url) {
+    return new Promise((resolve, reject) => {
+      let u;
+      try { u = new URL(url, base); } catch { return reject(new Error("bad url")); }
+      if (u.origin !== origin) return reject(new Error("off-host url"));
+      if (++calls > SCAN_MAX_CALLS) return reject(new Error("scan too large"));
+      const req = https.get(u, {
+        lookup: safeLookup, timeout: FETCH_TIMEOUT_MS,
+        headers: { Authorization: `Bearer ${token}`, Accept: "application/json", "User-Agent": "triton-canvas-tracker" },
+      }, res => {
+        if (res.statusCode === 401) { res.resume(); return reject(new TokenRejected("token rejected")); }
+        if (res.statusCode !== 200) { res.resume(); return reject(Object.assign(new Error(`Canvas ${res.statusCode}`), { status: res.statusCode })); }
+        const chunks = []; let size = 0;
+        res.on("data", c => { size += c.length; if (size > MAX_FEED_BYTES) req.destroy(new Error("too large")); else chunks.push(c); });
+        res.on("end", () => {
+          try {
+            const data = JSON.parse(Buffer.concat(chunks).toString("utf8").replace(/^while\(1\);/, ""));
+            const m = (res.headers.link || "").match(/<([^>]+)>;\s*rel="next"/);
+            let next = null;
+            if (m) { try { const n = new URL(m[1]); if (n.origin === origin) next = n.href; } catch {} }
+            resolve({ data, next });
+          } catch (e) { reject(e); }
+        });
+        res.on("error", reject);
+      });
+      req.on("timeout", () => req.destroy(new Error("timed out")));
+      req.on("error", reject);
+    });
+  };
+}
+
+async function handleCanvasScan(req, res) {
+  if (req.method !== "POST") return send(res, 405, "Method not allowed");
+  if (rateLimited(clientIp(req))) return send(res, 429, "Too many requests. Try again in a few minutes.");
+  let body;
+  try { body = JSON.parse(await readBody(req, 8192)); } catch { return send(res, 400, "Bad request"); }
+  const host = String(body.host || "").trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+  const token = String(body.token || "").trim();
+  if (!CANVAS_HOST.test(host) || net.isIP(host)) return send(res, 400, "That isn't a valid Canvas address (for example canvas.ucsd.edu).");
+  if (!CANVAS_TOKEN.test(token)) return send(res, 400, "That doesn't look like a Canvas access token. Copy it again from Canvas → Account → Settings.");
+  const base = `https://${host}`;
+  try {
+    const result = await Promise.race([
+      TTCanvasScan.scan({ base, getJson: canvasTokenFetcher(base, token), isLoginError: e => e instanceof TokenRejected }),
+      new Promise((_, rej) => setTimeout(() => rej(new Error("scan timed out")), SCAN_TIMEOUT_MS)),
+    ]);
+    send(res, 200, JSON.stringify({ ...result, scannedAt: Date.now() }), "application/json", { "Cache-Control": "no-store" });
+  } catch (e) {
+    console.warn(`canvas scan failed: ${e instanceof TokenRejected ? "token rejected" : e.message}`);  // never log the token
+    if (e instanceof TokenRejected) return send(res, 401, "Canvas didn't accept that access token. It may have expired or been deleted; create a new one in Canvas → Account → Settings.");
+    send(res, 502, "Couldn't scan Canvas right now. Try again in a minute.");
+  }
+}
+
 // ---------- UCSD Class Planner schedules ----------
 
 const SCHEDULE_CACHE_MS = 15 * 60_000;
@@ -227,6 +297,9 @@ const server = http.createServer((req, res) => {
   try { url = new URL(req.url, "http://localhost"); } catch { return send(res, 400, "Bad request"); }
   if (url.pathname === "/api/feed") return handleFeed(req, res);
   if (url.pathname === "/api/schedule") return handleSchedule(req, res);
+  if (url.pathname === "/api/canvas-scan") return handleCanvasScan(req, res);
+  if (url.pathname === "/lib/shared.js") return fs.readFile(path.join(__dirname, "extension", "shared.js"), (err, data) =>
+    err ? send(res, 404, "Not found") : send(res, 200, data, "text/javascript; charset=utf-8"));
   if (req.method !== "GET" && req.method !== "HEAD") return send(res, 405, "Method not allowed");
   if (url.pathname === "/healthz") return send(res, 200, "ok");
   serveStatic(res, url.pathname);

@@ -63,6 +63,13 @@
     return S.parseGsText(dueIdx >= 0 ? t.slice(dueIdx) : t, now.getTime ? now.getTime() : now);
   }
 
+  function pickReleased(row) {
+    const times = [...row.querySelectorAll("time[datetime]")];
+    const el = times.find(t => /release/i.test(t.className) || /release/i.test(t.getAttribute("aria-label") || ""))
+      || (times.length >= 2 ? times[0] : null);
+    return el ? S.parseGsDatetime(el.getAttribute("datetime")) : null;
+  }
+
   // Course page (gradescope.com/courses/123) -> { course, assignments: [...] }
   function parseCourse(doc, courseId, fallbackShort, now = new Date()) {
     if (isLoginPage(doc)) return { loggedIn: false, assignments: [] };
@@ -89,6 +96,7 @@
           title,
           course,
           due: pickDue(row, now),
+          released: pickReleased(row),
           link: href ? new URL(href, GS).href : `${GS}/courses/${courseId}`,
           submitted,
           hw: S.homeworkKey(title),
