@@ -25,6 +25,9 @@ const state = {
   showEvents: store.get("showEvents", false),
   feedItems: [],
   custom: store.get("custom", []),  // items the user added by hand
+  notes: store.get("notes", []),    // reminders / sticky notes (not class items)
+  notesShowDone: false,
+  notesCat: "",
   synced: store.get("synced", null),  // homework from the Triton Tracker Sync extension
   tokenSync: store.get("tokenSync", null),  // homework from the website's Canvas-token scan
   bmSync: store.get("bmSync", null),        // homework imported by the Triton Sync bookmarklet
@@ -370,7 +373,7 @@ function renderCalendar(visible, colors, now) {
         day.toLocaleDateString(undefined, { weekday: "short" }),
         h("span", { class: "d" }, day.toLocaleDateString(undefined, { month: "numeric", day: "numeric" }))),
       h("div", { class: "cal-body" },
-        onDay.length ? onDay.map(it => {
+        dayCells(onDay.map(it => {
           const inWindow = it.start && !(it.due >= dayStart && it.due <= dayEnd);
           let tm = it.start ? (inWindow ? "window open" : "window closes") : isAllDay(it.due) ? "due today" : fmtTime(it.due);
           if (it.estimated) tm = "~" + tm + " (est.)";
@@ -381,7 +384,7 @@ function renderCalendar(visible, colors, now) {
             h("span", { class: "tm" }, tm),
             titleEl(it),
             h("span", { class: "cn" }, shortCourse(it.course)));
-        }) : h("div", { class: "cal-none" }, "—")),
+        }), dayStart, dayEnd)),
     );
   });
   return [nav, h("div", { class: "cal" }, cols)];
@@ -429,8 +432,16 @@ function render() {
   $("#s-exam").textContent = active.filter(it => it.due >= now && isExam(it)).length;
 
   renderNextClassHud(now);
-  $("#filterbar").hidden = state.tab === "schedule";
-  const board = state.tab === "schedule" ? renderSchedule(colors, now)
+  renderPins(now);
+  checkNoteAlerts(now);
+  const attn = notesNeedingAttention(now).length;
+  $("#s-notes").hidden = !attn;
+  $("#s-notes").replaceChildren(h("b", {}, String(attn)), ` reminder${attn === 1 ? "" : "s"} to act on`);
+  const openNotes = state.notes.filter(n => !n.done).length;
+  document.querySelector('.tabs [data-tab="notes"]').textContent = openNotes ? `Reminders (${openNotes})` : "Reminders";
+  $("#filterbar").hidden = state.tab === "schedule" || state.tab === "notes";
+  const board = state.tab === "notes" ? renderNotes(now)
+    : state.tab === "schedule" ? renderSchedule(colors, now)
     : state.tab === "calendar" ? renderCalendar(visible, colors, now)
     : state.tab === "exams" ? renderExams(active, finished, colors, now)
     : renderList(active, finished, colors, now);
@@ -792,7 +803,7 @@ $("#token-remove").addEventListener("click", () => {
 $("#set-disconnect").addEventListener("click", () => {
   if (!confirm("Forget your feed link, checked-off items and grade weights on this browser?")) return;
   store.clear();
-  Object.assign(state, { items: [], feedItems: [], custom: [], schedule: null, scheduleError: null, synced: null, tokenSync: null, bmSync: null, undone: new Set(), dismissedUndated: new Set(), done: new Set(), hidden: new Set(), weights: {}, sort: "due", tab: "list", weekOffset: 0, host: CFG.canvasHost, showEvents: false });
+  Object.assign(state, { items: [], feedItems: [], custom: [], schedule: null, scheduleError: null, synced: null, tokenSync: null, bmSync: null, notes: [], undone: new Set(), dismissedUndated: new Set(), done: new Set(), hidden: new Set(), weights: {}, sort: "due", tab: "list", weekOffset: 0, host: CFG.canvasHost, showEvents: false });
   $("#settings-dlg").close();
   applyHost(); render();
 });
@@ -1314,6 +1325,181 @@ $("#i-delete").addEventListener("click", () => {
 });
 
 $("#btn-add").addEventListener("click", () => openItem());
+
+// ---------- Reminders (sticky notes for non-class things: OAs, interviews, emails…) ----------
+
+const NOTE_CATS = { oa: "OA", interview: "Interview", application: "Application", email: "Email", ta: "TA / Tutoring", other: "Other" };
+const NOTE_COLORS = ["#fff3a8", "#ffd9e3", "#d3eaff", "#d9f5d3", "#ffe2bd", "#e7deff"];
+const saveNotes = () => store.set("notes", state.notes);
+const noteRemindAt = n => (n.due && n.lead != null ? n.due - n.lead * D : null);
+
+// "now" = inside the remind-me window, "later" = before it, "open" = no deadline.
+function noteState(n, now) {
+  if (n.done) return "done";
+  if (!n.due) return "open";
+  if (now > n.due) return "overdue";
+  const r = noteRemindAt(n);
+  return r != null && now >= r ? "now" : "later";
+}
+const notesNeedingAttention = now => state.notes.filter(n => ["now", "overdue"].includes(noteState(n, now))).sort((a, b) => a.due - b.due);
+
+function noteCountdown(n, now) {
+  const ms = n.due - now;
+  if (ms < 0) return { text: `${fmtSpan(-ms)} overdue`, cls: "u-late" };
+  return { text: `${fmtSpan(ms)} left`, cls: ms < D ? "u-red" : ms < 3 * D ? "u-orange" : ms < 7 * D ? "u-blue" : "u-green" };
+}
+
+function toggleNote(n) { n.done = !n.done; saveNotes(); render(); }
+
+function noteCard(n, now) {
+  const st = noteState(n, now);
+  const r = noteRemindAt(n);
+  return h("div", { class: `note st-${st}`, style: { "--note": n.color || NOTE_COLORS[0] } },
+    h("div", { class: "note-top" },
+      h("span", { class: "note-cat" }, NOTE_CATS[n.cat] || "Other"),
+      h("button", { class: "check", title: n.done ? "Mark not done" : "Mark done", "aria-label": n.done ? "Mark not done" : "Mark done", onclick: () => toggleNote(n) }, svg(CHECK_SVG))),
+    h("button", { type: "button", class: "note-title", title: "Edit", onclick: () => openNote(n.id) }, n.title),
+    n.body && h("p", { class: "note-body" }, n.body),
+    h("div", { class: "note-foot" },
+      n.due ? [
+        h("div", {}, "Due ", h("b", {}, fmtDue(n.due)), " ", st !== "done" && h("span", { class: "pill " + noteCountdown(n, now).cls }, noteCountdown(n, now).text)),
+        st === "now" && h("div", { class: "note-alert" }, n.lead ? `⏰ Start now: you wanted ${n.lead} day${n.lead === 1 ? "" : "s"} for this` : "⏰ Due soon"),
+        st === "overdue" && h("div", { class: "note-alert" }, "⚠ Past the deadline"),
+        st === "later" && r != null && h("div", { class: "note-later" }, `Reminder starts ${fmtDay(r)} (in ${fmtSpan(r - now)})`),
+      ] : h("div", { class: "note-later" }, "No deadline")));
+}
+
+function renderNotes(now) {
+  const order = { overdue: 0, now: 1, later: 2, open: 3, done: 4 };
+  const list = state.notes
+    .filter(n => state.notesShowDone || !n.done)
+    .filter(n => !state.notesCat || n.cat === state.notesCat)
+    .sort((a, b) => order[noteState(a, now)] - order[noteState(b, now)] || (a.due || Infinity) - (b.due || Infinity) || b.created - a.created);
+  const doneCount = state.notes.filter(n => n.done).length;
+  const canNotify = "Notification" in window;
+
+  const bar = h("div", { class: "notes-bar" },
+    h("button", { class: "btn primary", onclick: () => openNote() }, "+ New Reminder"),
+    h("label", { class: "sort" }, h("span", { class: "lbl" }, "Show"),
+      h("select", { onchange: e => { state.notesCat = e.target.value; render(); } },
+        h("option", { value: "" }, "All categories"),
+        ...Object.entries(NOTE_CATS).map(([k, v]) => h("option", { value: k, selected: state.notesCat === k }, v)))),
+    doneCount > 0 && h("label", { class: "cf" }, h("input", { type: "checkbox", checked: state.notesShowDone, onchange: e => { state.notesShowDone = e.target.checked; render(); } }), `Done (${doneCount})`),
+    canNotify && (Notification.permission === "granted"
+      ? h("span", { class: "muted small" }, "🔔 Browser alerts on (while this site is open)")
+      : Notification.permission === "denied" ? null
+      : h("button", { class: "btn small", onclick: () => Notification.requestPermission().then(() => render()) }, "🔔 Turn on browser alerts")));
+
+  const board = list.length
+    ? h("div", { class: "notes-grid" }, list.map(n => noteCard(n, now)))
+    : h("div", { class: "empty notes-empty" },
+        h("b", {}, state.notes.length ? "Nothing to show with these filters." : "No reminders yet."),
+        !state.notes.length && h("p", {}, "Sticky notes for the things that aren't on Canvas: an online assessment to finish, an interview to prep for, TA hours, an email you owe someone. Give one a deadline and how many days ahead you want to start, and it gets pinned to the top of every tab when it's time."));
+  return [h("div", { class: "notes" }, bar, board)];
+}
+
+// Strip of reminders that need attention, shown above the tabs on every view.
+function renderPins(now) {
+  const el = $("#pins");
+  const pins = notesNeedingAttention(now);
+  el.hidden = !pins.length;
+  if (!pins.length) return;
+  el.replaceChildren(
+    h("span", { class: "pins-lbl" }, "📌 Reminders"),
+    ...pins.slice(0, 4).map(n => h("span", { class: "pin st-" + noteState(n, now), style: { "--note": n.color || NOTE_COLORS[0] } },
+      h("button", { type: "button", class: "pin-title", title: "Open reminder", onclick: () => { state.tab = "notes"; store.set("tab", "notes"); render(); } },
+        h("b", {}, NOTE_CATS[n.cat] || "Other"), ` ${n.title} · ${noteCountdown(n, now).text}`),
+      h("button", { type: "button", class: "pin-done", title: "Mark done", "aria-label": `Mark ${n.title} done`, onclick: () => toggleNote(n) }, "✓"))),
+    ...(pins.length > 4 ? [h("button", { type: "button", class: "link", onclick: () => { state.tab = "notes"; store.set("tab", "notes"); render(); } }, `+${pins.length - 4} more`)] : []));
+}
+
+// Reminders on the Calendar tab: the deadline, and the day to start.
+function calendarNotes(dayStart, dayEnd) {
+  const out = [];
+  for (const n of state.notes) {
+    if (!n.due) continue;
+    const r = noteRemindAt(n);
+    const dueHere = n.due >= dayStart && n.due <= dayEnd;
+    const startHere = r != null && n.lead > 0 && r >= dayStart && r <= dayEnd;
+    if (!dueHere && !startHere) continue;
+    out.push(h("div", { class: "cal-item cal-note" + (n.done ? " done" : ""), style: { "--note": n.color || NOTE_COLORS[0] } },
+      h("span", { class: "tm" }, dueHere ? `📌 due ${fmtTime(n.due)}` : "📌 start"),
+      h("button", { type: "button", class: "link-btn", onclick: () => openNote(n.id) }, n.title),
+      h("span", { class: "cn" }, NOTE_CATS[n.cat] || "Other")));
+  }
+  return out;
+}
+function dayCells(itemCells, dayStart, dayEnd) {
+  const all = [...itemCells, ...calendarNotes(dayStart, dayEnd)];
+  return all.length ? all : h("div", { class: "cal-none" }, "—");
+}
+
+// Browser alerts (only while a Triton Tracker tab is open; a website can't alert when closed).
+function checkNoteAlerts(now) {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  const sent = new Set(store.get("notesAlerted", []));
+  let changed = false;
+  for (const n of state.notes) {
+    const st = noteState(n, now);
+    if (st !== "now" && st !== "overdue") continue;
+    const key = `${n.id}:${st}:${n.due}`;
+    if (sent.has(key)) continue;
+    sent.add(key); changed = true;
+    try {
+      new Notification(st === "overdue" ? `Overdue: ${n.title}` : `Reminder: ${n.title}`, {
+        body: `${NOTE_CATS[n.cat] || "Other"} · due ${fmtDue(n.due)}${st === "now" ? ` (${fmtSpan(n.due - now)} left)` : ""}`,
+        tag: n.id, icon: "icon.svg",
+      });
+    } catch {}
+  }
+  if (changed) store.set("notesAlerted", [...sent].slice(-300));
+}
+
+let editingNote = null;
+function openNote(id = null) {
+  editingNote = id;
+  const n = id ? state.notes.find(x => x.id === id) : null;
+  $("#note-dlg-title").textContent = n ? "Edit Reminder" : "New Reminder";
+  $("#n-title").value = n ? n.title : "";
+  $("#n-cat").value = n ? n.cat : "oa";
+  $("#n-body").value = n ? n.body || "" : "";
+  $("#n-date").value = n ? (n.due ? dateVal(n.due) : "") : dateVal(Date.now() + 7 * D);
+  $("#n-time").value = n && n.due ? timeVal(n.due) : "23:59";
+  $("#n-lead").value = n ? (n.lead ?? "") : 3;
+  const color = n ? n.color : NOTE_COLORS[0];
+  $("#n-colors").replaceChildren(...NOTE_COLORS.map(c => h("label", { class: "swatch", style: { "--note": c }, title: "Note color" },
+    h("input", { type: "radio", name: "n-color", value: c, checked: c === color }), h("span", {}))));
+  $("#n-delete").hidden = !n;
+  $("#n-error").textContent = "";
+  $("#note-dlg").showModal();
+  $("#n-title").focus();
+}
+
+$("#n-save").addEventListener("click", e => {
+  const title = $("#n-title").value.trim();
+  const err = $("#n-error");
+  if (!title) { e.preventDefault(); err.textContent = "Give it a name."; return; }
+  const date = $("#n-date").value, time = $("#n-time").value || "23:59";
+  let due = null;
+  if (date) {
+    const [y, mo, d] = date.split("-").map(Number), [hh, mm] = time.split(":").map(Number);
+    due = new Date(y, mo - 1, d, hh, mm).getTime();
+  }
+  const leadRaw = $("#n-lead").value.trim();
+  const lead = due && leadRaw !== "" ? Math.max(0, Math.min(60, Math.round(+leadRaw) || 0)) : null;
+  const data = {
+    title: title.slice(0, 120), cat: $("#n-cat").value, body: $("#n-body").value.trim().slice(0, 1000), due, lead,
+    color: (document.querySelector('input[name="n-color"]:checked') || {}).value || NOTE_COLORS[0],
+  };
+  if (editingNote) Object.assign(state.notes.find(x => x.id === editingNote), data);
+  else state.notes.push({ id: "note-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), done: false, created: Date.now(), ...data });
+  saveNotes(); render();
+});
+$("#n-delete").addEventListener("click", () => {
+  if (!editingNote || !confirm("Delete this reminder?")) return;
+  state.notes = state.notes.filter(x => x.id !== editingNote);
+  saveNotes(); $("#note-dlg").close(); render();
+});
 
 // ---------- Boot ----------
 

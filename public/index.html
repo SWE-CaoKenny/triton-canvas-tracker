@@ -31,6 +31,7 @@
       <div class="stat"><b id="s-week">0</b> due this week</div>
       <div class="stat exam"><b id="s-exam">0</b> exams &amp; quizzes ahead</div>
       <div class="stat next" id="s-next" hidden></div>
+      <div class="stat hot" id="s-notes" hidden></div>
     </div>
     <div class="actions">
       <button class="btn primary" id="btn-add">+ Add Item</button>
@@ -83,11 +84,13 @@
 
   <!-- Tracker -->
   <section id="tracker" hidden>
+    <div id="pins" class="pins" hidden></div>
     <nav class="tabs" role="tablist">
       <button role="tab" data-tab="list">List</button>
       <button role="tab" data-tab="calendar">Calendar</button>
       <button role="tab" data-tab="exams">Exams &amp; Quizzes</button>
       <button role="tab" data-tab="schedule">My Schedule</button>
+      <button role="tab" data-tab="notes">Reminders</button>
     </nav>
     <div class="panel tab-panel">
       <div class="filterbar" id="filterbar">
@@ -136,6 +139,57 @@
     </div>
     <div class="dlg-actions">
       <button class="btn primary" value="close">Done</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Reminder (sticky note) dialog -->
+<dialog id="note-dlg">
+  <form method="dialog" class="dlg">
+    <div class="dlg-head">
+      <h3 id="note-dlg-title">New Reminder</h3>
+      <button class="x" value="close" formnovalidate aria-label="Close">×</button>
+    </div>
+    <div class="dlg-body">
+      <div class="field-row">
+        <label class="field">What is it?
+          <input id="n-title" type="text" placeholder="e.g. Stripe online assessment" maxlength="120" autocomplete="off">
+        </label>
+        <label class="field">Category
+          <select id="n-cat">
+            <option value="oa">OA (online assessment)</option>
+            <option value="interview">Interview</option>
+            <option value="application">Application</option>
+            <option value="email">Email to answer</option>
+            <option value="ta">TA / Tutoring</option>
+            <option value="other">Other</option>
+          </select>
+        </label>
+      </div>
+      <label class="field">Notes (optional)
+        <textarea id="n-body" rows="3" maxlength="1000" placeholder="Link, recruiter name, what to prepare…"></textarea>
+      </label>
+      <div class="field-row three">
+        <label class="field">Deadline (optional)
+          <input id="n-date" type="date">
+        </label>
+        <label class="field">Time
+          <input id="n-time" type="time" value="23:59">
+        </label>
+        <label class="field">Remind me
+          <span class="lead-wrap"><input id="n-lead" type="number" min="0" max="60" step="1" value="3"> days before</span>
+        </label>
+      </div>
+      <div class="field">Color
+        <div id="n-colors" class="swatches"></div>
+      </div>
+      <div id="n-error" class="error" role="alert"></div>
+    </div>
+    <div class="dlg-actions split">
+      <button type="button" class="btn danger" id="n-delete" hidden>Delete</button>
+      <span class="spacer"></span>
+      <button class="btn" value="cancel" formnovalidate>Cancel</button>
+      <button class="btn primary" value="save" id="n-save">Save</button>
     </div>
   </form>
 </dialog>
