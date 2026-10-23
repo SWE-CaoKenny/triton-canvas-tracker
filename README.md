@@ -56,13 +56,13 @@ npm start
 
 Then open http://localhost:3000.
 
-## Deploy on Railway
+## Deploy on Cloudflare
 
 1. Fork or push this repo to GitHub.
-2. In [Railway](https://railway.app), choose **New Project → Deploy from GitHub repo** and pick this repo.
-3. Railway detects Node and runs `npm start` automatically. Under **Settings → Networking**, click **Generate Domain**.
+2. In the [Cloudflare dashboard](https://dash.cloudflare.com), go to **Workers & Pages → Create → Import a repository** and pick this repo.
+3. Leave the build command empty and the deploy command as `npx wrangler deploy` (`wrangler.toml` already runs `node build.js` and serves `public/`).
 
-Every push to `main` redeploys automatically.
+Every push to `main` redeploys automatically. `worker.js` is the Cloudflare version of `server.js`; `npm start` still runs the Node server for local development.
 
 ## Using it at another school
 

@@ -5,3 +5,7 @@ node_modules/
 *.ics
 !test/*.ics
 .claude/
+public/bookmarklet.js
+public/lib/
+.wrangler/
+.dev.vars

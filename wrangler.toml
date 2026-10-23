@@ -1,0 +1,10 @@
+name = "triton-canvas-tracker"
+main = "worker.js"
+compatibility_date = "2025-09-01"
+
+[build]
+command = "node build.js"
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
