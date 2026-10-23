@@ -157,7 +157,7 @@ function readBody(req, limit = 4096) {
 }
 
 // The feed URL is sent in a POST body (not the query string) so it never lands in
-// access logs of Railway or any proxy in between.
+// access logs of the host or any proxy in between.
 async function handleFeed(req, res) {
   if (req.method !== "POST") return send(res, 405, "Method not allowed");
   if (rateLimited(clientIp(req))) return send(res, 429, "Too many requests. Try again in a few minutes.");

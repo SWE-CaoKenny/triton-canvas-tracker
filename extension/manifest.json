@@ -19,7 +19,7 @@
     },
     {
       "matches": [
-        "https://triton-canvas-tracker-production.up.railway.app/*",
+        "https://tritontracker.caokenny0705.workers.dev/*",
         "http://localhost:3000/*"
       ],
       "js": ["bridge.js"],

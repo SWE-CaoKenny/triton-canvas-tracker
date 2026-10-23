@@ -4,7 +4,7 @@ See every Canvas assignment, quiz and exam in one WebReg-style dashboard, sorted
 
 Built for UC San Diego students, but it works with **any school that uses Canvas**.
 
-**👉 Use it now: [triton-canvas-tracker-production.up.railway.app](https://triton-canvas-tracker-production.up.railway.app)**
+**👉 Use it now: [tritontracker.caokenny0705.workers.dev](https://tritontracker.caokenny0705.workers.dev)**
 
 > Unofficial student project. Not affiliated with UC San Diego or Instructure.
 

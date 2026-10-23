@@ -1,4 +1,4 @@
-const TRACKER = "https://triton-canvas-tracker-production.up.railway.app/";
+const TRACKER = "https://tritontracker.caokenny0705.workers.dev/";
 const $ = id => document.getElementById(id);
 
 const LABEL = { ok: ["Connected", "ok"], login: ["Log in needed", "login"], error: ["Couldn't read", "error"] };

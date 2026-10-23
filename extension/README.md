@@ -1,6 +1,6 @@
 # Triton Tracker Sync (Chrome / Edge extension)
 
-Some courses don't put homework on the Canvas calendar: it's a PDF in **Modules** (`HW1.pdf`) and you submit it on **Gradescope**. This extension finds that homework automatically and adds it to [Triton Tracker](https://triton-canvas-tracker-production.up.railway.app).
+Some courses don't put homework on the Canvas calendar: it's a PDF in **Modules** (`HW1.pdf`) and you submit it on **Gradescope**. This extension finds that homework automatically and adds it to [Triton Tracker](https://tritontracker.caokenny0705.workers.dev).
 
 ## What it does
 
